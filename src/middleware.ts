@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 
 const PROTECTED_PREFIXES = ["/dashboard", "/links", "/qr-studio", "/presets", "/settings"];
-const AUTH_PAGES = ["/login", "/register"];
+const AUTH_PAGES = ["/login"];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -26,5 +26,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/links/:path*", "/qr-studio/:path*", "/presets/:path*", "/settings/:path*", "/login", "/register"],
+  matcher: ["/dashboard/:path*", "/links/:path*", "/qr-studio/:path*", "/presets/:path*", "/settings/:path*", "/login"],
 };

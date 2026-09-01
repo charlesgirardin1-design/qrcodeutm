@@ -2,7 +2,6 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,12 +64,6 @@ function LoginForm() {
             {loading ? "Connexion..." : "Se connecter"}
           </Button>
         </form>
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          Pas encore de compte ?{" "}
-          <Link href="/register" className="font-medium text-primary hover:underline">
-            Créer un compte
-          </Link>
-        </p>
       </CardContent>
     </Card>
   );

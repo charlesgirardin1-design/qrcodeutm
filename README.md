@@ -23,9 +23,9 @@ src/
       links/[id]/page.tsx   # Détail d'un lien + analytics dédiées
       qr-studio/page.tsx    # QR Code Studio
       presets/page.tsx      # Gestion des presets UTM
-    login/ register/        # Pages d'authentification
+    login/                  # Page d'authentification (pas de création de compte)
     api/
-      auth/{login,register,logout}/route.ts
+      auth/{login,logout}/route.ts
       presets/route.ts, presets/[id]/route.ts
       links/route.ts, links/[id]/route.ts, links/[id]/export/route.ts
       analytics/route.ts     # Agrégations Prisma (KPI, séries temporelles, geo, UTM)
@@ -53,7 +53,7 @@ Prisma Client ne peut pas exécuter de requêtes SQL directement depuis l'Edge R
 cp .env.example .env       # renseigner DATABASE_URL, Upstash, secrets
 npm install
 npm run db:push            # ou db:migrate en production
-npm run db:seed            # utilisateur demo@linkforge.app / password123
+npm run db:seed            # crée l'utilisateur demo@linkforge.app / password123 (pas d'inscription en ligne)
 npm run dev
 ```
 

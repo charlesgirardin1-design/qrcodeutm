@@ -36,11 +36,8 @@ export default async function HomePage() {
       <header className="container flex items-center justify-between py-6">
         <span className="text-lg font-bold">LinkForge</span>
         <nav className="flex items-center gap-2">
-          <Button asChild variant="ghost">
-            <Link href="/login">Connexion</Link>
-          </Button>
           <Button asChild>
-            <Link href="/register">Commencer gratuitement</Link>
+            <Link href="/login">Connexion</Link>
           </Button>
         </nav>
       </header>
@@ -56,7 +53,7 @@ export default async function HomePage() {
           </p>
           <div className="mt-8 flex items-center justify-center gap-3">
             <Button asChild size="lg">
-              <Link href="/register">Créer mon premier lien</Link>
+              <Link href="/login">Se connecter</Link>
             </Button>
           </div>
         </div>
