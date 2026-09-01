@@ -1,0 +1,176 @@
+// LinkForge — schéma Prisma
+// UTM Builder + Link Shortener + Analytics + QR Code Studio
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum RedirectType {
+  PERMANENT_301
+  TEMPORARY_302
+}
+
+enum QrDotStyle {
+  SQUARE
+  DOTS
+  ROUNDED
+  CLASSY
+  CLASSY_ROUNDED
+  EXTRA_ROUNDED
+}
+
+enum QrErrorCorrection {
+  L
+  M
+  Q
+  H
+}
+
+enum DeviceType {
+  DESKTOP
+  MOBILE
+  TABLET
+  OTHER
+}
+
+// ---------------------------------------------------------------------------
+// User
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  image        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  presets Preset[]
+  links   Link[]
+
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Preset — configuration UTM réutilisable ("Campagne Facebook Ads Q3", ...)
+// ---------------------------------------------------------------------------
+
+model Preset {
+  id   String @id @default(cuid())
+  name String
+
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmTerm     String?
+  utmContent  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  links Link[]
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Link — lien court + URL longue construite (destination + UTM + custom params)
+// ---------------------------------------------------------------------------
+
+model Link {
+  id    String @id @default(cuid())
+  slug  String @unique
+  title String?
+
+  // URL de destination brute saisie par l'utilisateur
+  originalUrl String
+  // URL finale construite (originalUrl + utm_* + paramètres custom), figée à la création
+  destinationUrl String
+
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmTerm     String?
+  utmContent  String?
+
+  // Paramètres personnalisés additionnels : [{ "key": "ref", "value": "twitter" }, ...]
+  customParams Json?
+
+  redirectType RedirectType @default(TEMPORARY_302)
+  expiresAt    DateTime?
+  isActive     Boolean      @default(true)
+
+  // Snapshot complet des options qr-code-styling (couleurs, dégradé, formes, logo, ECC...)
+  qrConfig Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  presetId String?
+  preset   Preset? @relation(fields: [presetId], references: [id], onDelete: SetNull)
+
+  clicks Click[]
+
+  @@index([userId])
+  @@index([presetId])
+  @@index([userId, createdAt])
+  @@index([utmSource, utmMedium, utmCampaign])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Click — historique détaillé de chaque redirection (pour analytics)
+// ---------------------------------------------------------------------------
+
+model Click {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+
+  // IP anonymisée (hash SHA-256 salé, jamais l'IP en clair) — conformité RGPD
+  ipHash String
+
+  userAgent String?
+  referrer  String?
+
+  country   String?
+  region    String?
+  city      String?
+  latitude  Float?
+  longitude Float?
+
+  deviceType DeviceType @default(OTHER)
+  os         String?
+  browser    String?
+
+  // hash(ipHash + userAgent) utilisé pour dédupliquer les visiteurs uniques
+  visitorHash String
+  isUnique    Boolean @default(false)
+
+  linkId String
+  link   Link   @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  // Index optimisés pour les requêtes d'agrégation du dashboard analytics
+  @@index([linkId])
+  @@index([timestamp])
+  @@index([linkId, timestamp])
+  @@index([linkId, isUnique])
+  @@index([visitorHash])
+  @@index([country])
+  @@index([deviceType])
+}
