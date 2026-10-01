@@ -6,7 +6,7 @@
  *  Stockage : Google Drive (originaux conservés OCTET POUR OCTET)
  *  Base     : Google Sheets (créée automatiquement par setup())
  *
- *  Fichiers du projet : Code.gs, Interface1.gs … Interface6.gs, appsscript.json.
+ *  Fichiers du projet : Code.gs (UN SEUL fichier, interface incluse) + appsscript.json.
  *  Installation : exécuter une fois setup(), puis
  *  Déployer > Nouveau déploiement > Application Web.
  * =============================================================================
@@ -68,11 +68,6 @@ const VIDEO_EXT = {
 // =============================================================================
 
 /**
- * L'interface (Index.html) est fournie en 6 petits fichiers Interface1.gs …
- * Interface6.gs (texte encodé en base64, générés par build.mjs) : plus faciles
- * à copier-coller, et aucun fichier HTML à nommer.
- */
-/**
  * Installation automatique : si setup() n'a jamais été exécutée (ou a échoué),
  * elle est lancée à la première ouverture / connexion. L'application Web
  * s'exécute avec le compte du propriétaire, qui a déjà donné les autorisations.
@@ -100,30 +95,14 @@ function doGet() {
       '<br><br>Dans l\'éditeur Apps Script, choisissez la fonction <b>setup</b>, cliquez sur <b>Exécuter</b> et acceptez les autorisations.</p>'
     );
   }
-  // Appels directs (typeof ne provoque pas d'erreur si un fichier manque).
-  const parts = [
-    typeof interfacePart1 === 'function' ? interfacePart1() : null,
-    typeof interfacePart2 === 'function' ? interfacePart2() : null,
-    typeof interfacePart3 === 'function' ? interfacePart3() : null,
-    typeof interfacePart4 === 'function' ? interfacePart4() : null,
-    typeof interfacePart5 === 'function' ? interfacePart5() : null,
-    typeof interfacePart6 === 'function' ? interfacePart6() : null,
-  ];
-  const missing = [];
-  parts.forEach(function (p, i) { if (p === null) missing.push('Interface' + (i + 1) + '.gs'); });
-  const b64 = parts.join('');
-  if (missing.length) {
+  // L'interface est intégrée dans ce même fichier (fonction indexHtml_, tout en bas).
+  if (typeof indexHtml_ !== 'function') {
     return HtmlService.createHtmlOutput(
-      '<p style="font-family:sans-serif;padding:24px">Installation incomplète : fichier(s) manquant(s) ou incomplet(s) : <b>' +
-      missing.join(', ') + '</b>.<br>Ajoutez-les (Fichiers ＋ Script), enregistrez, puis redéployez une nouvelle version.</p>'
+      '<p style="font-family:sans-serif;padding:24px">Le fichier Code.gs est incomplet (la fin manque). ' +
+      'Recopiez-le en entier : la dernière ligne doit être « // FIN DU FICHIER ». Enregistrez, puis redéployez une nouvelle version.</p>'
     );
   }
-  let html;
-  try {
-    html = Utilities.newBlob(Utilities.base64Decode(b64)).getDataAsString('UTF-8');
-  } catch (e) {
-    return HtmlService.createHtmlOutput('<p style="font-family:sans-serif;padding:24px">Un des fichiers Interface1.gs … Interface6.gs est incomplet : recopiez-les entièrement, enregistrez, puis redéployez.</p>');
-  }
+  const html = indexHtml_();
   return HtmlService.createHtmlOutput(html)
     .setTitle('Photothèque — Croix-Rouge Boulogne-Billancourt')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
