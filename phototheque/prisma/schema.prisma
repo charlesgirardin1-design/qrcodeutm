@@ -1,0 +1,199 @@
+// Photothèque — Croix-Rouge française, UL Boulogne-Billancourt
+// Schéma Prisma (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum MediaType {
+  PHOTO
+  VIDEO
+}
+
+enum MediaStatus {
+  TO_SORT // À TRIER (badge rouge)
+  SORTED // TRIÉE (badge vert)
+}
+
+/// Cycle de vie technique du média (indépendant du statut de tri).
+enum UploadState {
+  PENDING // enregistrement créé, fichier original en cours d'envoi
+  READY // original stocké et vérifié : visible dans la photothèque
+  DELETING // suppression en cours / inachevée : masqué, relançable
+}
+
+enum CaptureDateSource {
+  EXIF
+  VIDEO_METADATA
+  FILE_DATE
+  MANUAL
+}
+
+// ---------------------------------------------------------------------------
+// User — comptes. Dans la V1, deux comptes partagés (sharedKey = "user" /
+// "admin") sont associés aux deux mots de passe globaux. Des comptes
+// individuels (email + passwordHash) pourront être ajoutés sans migration
+// des médias, qui référencent déjà un User.
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  role         Role
+  sharedKey    String?  @unique
+  email        String?  @unique
+  passwordHash String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  uploads Media[] @relation("UploadedBy")
+  sorted  Media[] @relation("SortedBy")
+}
+
+// ---------------------------------------------------------------------------
+// Catégories & activités (gérées dynamiquement par l'administrateur)
+// ---------------------------------------------------------------------------
+
+model Category {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String?
+  active       Boolean  @default(true)
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  activities Activity[]
+  media      Media[]
+
+  @@index([active, displayOrder])
+}
+
+model Activity {
+  id           String   @id @default(cuid())
+  name         String
+  active       Boolean  @default(true)
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  media Media[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId, active, displayOrder])
+}
+
+// ---------------------------------------------------------------------------
+// Media — un fichier ORIGINAL (jamais modifié) + dérivés d'affichage séparés.
+//
+// Historique : categoryName / activityName sont des INSTANTANÉS figés à
+// l'importation. Renommer une catégorie ou une activité ne réécrit donc pas
+// l'historique ; les ids (categoryId / activityId) restent utilisés pour
+// filtrer. La suppression d'une catégorie/activité utilisée est interdite
+// (onDelete: Restrict) : il faut la désactiver.
+// ---------------------------------------------------------------------------
+
+model Media {
+  id String @id @default(cuid())
+
+  // Fichier original — conservé octet pour octet
+  originalFilename String
+  extension        String
+  storageKey       String  @unique
+  mimeType         String
+  mediaType        MediaType
+  fileSize         BigInt
+  checksumSha256   String?
+
+  // Dérivés d'affichage (jamais téléchargés à la place de l'original)
+  thumbnailKey String?
+  previewKey   String?
+  width        Int?
+  height       Int?
+  durationSec  Float?
+
+  // Métadonnées
+  captureDate       DateTime
+  captureDateSource CaptureDateSource @default(MANUAL)
+  uploadedAt        DateTime          @default(now())
+  photographer      String
+
+  categoryId   String?
+  category     Category? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  categoryName String
+
+  activityId   String?
+  activity     Activity? @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  activityName String
+
+  // Tri
+  status       MediaStatus @default(TO_SORT)
+  sortedAt     DateTime?
+  sortedById   String?
+  sortedBy     User?       @relation("SortedBy", fields: [sortedById], references: [id], onDelete: SetNull)
+  sortedByName String?
+
+  // Importation
+  uploadState    UploadState @default(PENDING)
+  uploadedById   String?
+  uploadedBy     User?       @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedByName String?
+  updatedAt      DateTime    @updatedAt
+
+  @@index([uploadState, captureDate, id])
+  @@index([uploadState, uploadedAt, id])
+  @@index([uploadState, status])
+  @@index([uploadState, mediaType])
+  @@index([categoryId])
+  @@index([activityId])
+  @@index([photographer])
+}
+
+// ---------------------------------------------------------------------------
+// Journal d'activité de la photothèque (tableau de bord, traçabilité)
+// ---------------------------------------------------------------------------
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  action    String // UPLOAD, SORT, UNSORT, DELETE, UPDATE, CATEGORY_*, ACTIVITY_*, ...
+  actorId   String?
+  actorName String
+  role      Role
+  count     Int      @default(1)
+  details   String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Tentatives de connexion — limitation anti force brute (par IP hachée)
+// ---------------------------------------------------------------------------
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  ipHash    String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([ipHash, createdAt])
+  @@index([createdAt])
+}

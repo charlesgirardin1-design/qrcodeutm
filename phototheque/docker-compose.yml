@@ -1,0 +1,40 @@
+# Lancement complet (base PostgreSQL + application + stockage persistant) :
+#   AUTH_SECRET=$(openssl rand -base64 48) docker compose up -d --build
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: photo
+      POSTGRES_PASSWORD: photo
+      POSTGRES_DB: phototheque
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U photo"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://photo:photo@db:5432/phototheque?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?Définissez AUTH_SECRET}
+      USER_PASSWORD: ${USER_PASSWORD:-9205}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Com9205*}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      LOCAL_STORAGE_DIR: /data/storage
+      APP_TIMEZONE: Europe/Paris
+    volumes:
+      # Originaux + miniatures : À SAUVEGARDER régulièrement
+      - mediadata:/data
+
+volumes:
+  pgdata:
+  mediadata:

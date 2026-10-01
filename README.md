@@ -1,5 +1,7 @@
 # LinkForge
 
+> Ce dépôt contient aussi la **Photothèque de la Croix-Rouge française (UL Boulogne-Billancourt)**, application autonome dans [`phototheque/`](phototheque/README.md).
+
 SaaS d'optimisation, génération et suivi de liens : **UTM Builder** + **raccourcisseur de liens** + **analytics en temps réel** + **générateur de QR codes personnalisés**.
 
 ## Stack technique
