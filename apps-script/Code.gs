@@ -74,7 +74,34 @@ const VIDEO_EXT = {
  */
 const UI_PARTS = 6;
 
+/**
+ * Installation automatique : si setup() n'a jamais été exécutée (ou a échoué),
+ * elle est lancée à la première ouverture / connexion. L'application Web
+ * s'exécute avec le compte du propriétaire, qui a déjà donné les autorisations.
+ */
+function ensureInstalled_() {
+  const p = PropertiesService.getScriptProperties();
+  const ok = ['AUTH_SECRET', 'USER_PASSWORD', 'ADMIN_PASSWORD', 'SPREADSHEET_ID', 'ROOT_FOLDER_ID', 'ORIGINALS_FOLDER_ID', 'THUMBS_FOLDER_ID']
+    .every(function (k) { return p.getProperty(k); });
+  if (ok) return;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    setup();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function doGet() {
+  try {
+    ensureInstalled_();
+  } catch (e) {
+    return HtmlService.createHtmlOutput(
+      '<p style="font-family:sans-serif;padding:24px">Installation impossible : ' + String(e && e.message || e) +
+      '<br><br>Dans l\'éditeur Apps Script, choisissez la fonction <b>setup</b>, cliquez sur <b>Exécuter</b> et acceptez les autorisations.</p>'
+    );
+  }
   const missing = [];
   let b64 = '';
   for (let i = 1; i <= UI_PARTS; i++) {
@@ -274,7 +301,7 @@ function hash_(text) {
 }
 
 function passwordVersion_(role) {
-  const pw = PropertiesService.getScriptProperties().getProperty(role === 'ADMIN' ? 'ADMIN_PASSWORD' : 'USER_PASSWORD') || '';
+  const pw = String(PropertiesService.getScriptProperties().getProperty(role === 'ADMIN' ? 'ADMIN_PASSWORD' : 'USER_PASSWORD') || '').trim();
   return hash_(prop_('AUTH_SECRET') + ':' + role + ':' + pw).slice(0, 16);
 }
 
@@ -319,10 +346,11 @@ function login(password) {
   const fails = JSON.parse(cache.get('loginFails') || '[]').filter(function (t) { return t > Date.now() - 15 * 60000; });
   if (fails.length >= 20) throw new Error('Trop de tentatives. Réessayez dans quelques minutes.');
 
-  const pw = String(password || '');
+  ensureInstalled_();
+  const pw = String(password || '').trim();
   const props = PropertiesService.getScriptProperties();
-  const isAdmin = hash_(pw) === hash_(props.getProperty('ADMIN_PASSWORD') || '\u0000');
-  const isUser = hash_(pw) === hash_(props.getProperty('USER_PASSWORD') || '\u0000');
+  const isAdmin = hash_(pw) === hash_(String(props.getProperty('ADMIN_PASSWORD') || '\u0000').trim());
+  const isUser = hash_(pw) === hash_(String(props.getProperty('USER_PASSWORD') || '\u0000').trim());
   const role = isAdmin ? 'ADMIN' : isUser ? 'USER' : null;
 
   if (!role) {
