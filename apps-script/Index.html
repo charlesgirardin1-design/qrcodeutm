@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js"></script>
+<style>
+:root{--red:#E3000F;--red-d:#b8000c;--red-soft:#fdecec;--green:#15803d;--green-soft:#ecfdf3;--fg:#111827;--muted:#6b7280;--border:#e5e7eb;--bg:#f8f9fb;--card:#fff;--radius:12px}
+*{box-sizing:border-box}html,body{margin:0;padding:0}
+body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--fg);background:var(--bg);font-size:14px;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-.02em}h2{font-size:15px;margin:0}
+.muted{color:var(--muted)}.small{font-size:12px}.hidden{display:none!important}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;border:1px solid transparent;font-weight:600;cursor:pointer;white-space:nowrap;background:#fff}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--red);color:#fff}.btn-primary:hover:not(:disabled){background:var(--red-d)}
+.btn-success{background:var(--green);color:#fff}
+.btn-outline{border-color:var(--border);background:#fff}.btn-outline:hover:not(:disabled){background:#f3f4f6}
+.btn-ghost{background:transparent}.btn-ghost:hover:not(:disabled){background:#f3f4f6}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger-outline{border-color:#fecaca;color:var(--red);background:#fff}.btn-danger-outline:hover{background:var(--red-soft)}
+.btn-sm{height:32px;padding:0 10px;font-size:13px}.btn-block{width:100%}
+.input,.select{height:38px;width:100%;border:1px solid #d1d5db;border-radius:8px;padding:0 10px;background:#fff}
+.input:focus,.select:focus{outline:2px solid #9ca3af;outline-offset:0}
+label.lbl{display:block;font-weight:600;font-size:13px;margin-bottom:6px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.badge-todo{background:var(--red-soft);color:#b91c1c;box-shadow:inset 0 0 0 1px #fecaca}
+.badge-done{background:var(--green-soft);color:#15803d;box-shadow:inset 0 0 0 1px #bbf7d0}
+.badge-dark{background:rgba(0,0,0,.7);color:#fff}
+.spin{width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.cross{width:28px;height:28px;flex:none}
+/* Connexion */
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(#f9fafb,#fff)}
+.login .box{width:100%;max-width:360px;text-align:center}
+.login .logo{width:64px;height:64px;margin:0 auto 16px;border:1px solid var(--border);border-radius:16px;background:#fff;display:flex;align-items:center;justify-content:center}
+.pw{position:relative}.pw .input{height:44px;padding-right:44px;font-size:16px}
+.pw button{position:absolute;right:6px;top:6px;height:32px;width:32px;border:0;background:none;cursor:pointer;color:var(--muted)}
+.alert{background:var(--red-soft);color:#b91c1c;border-radius:8px;padding:8px 12px;font-size:13px;text-align:left}
+/* Mise en page */
+.shell{display:flex;min-height:100vh}
+.side{width:240px;flex:none;background:#fff;border-right:1px solid var(--border);padding:20px 12px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:28px}
+.brand b{display:block;font-size:14px}.brand span{font-size:11px;color:var(--muted)}
+.nav a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:var(--muted);font-weight:500;text-decoration:none;cursor:pointer}
+.nav a:hover{background:#f3f4f6;color:var(--fg)}.nav a.active{background:#f3f4f6;color:var(--fg)}.nav a.active .ic{color:var(--red)}
+.main{flex:1;min-width:0;padding:28px 32px 40px}
+.topbar{display:none}
+.bottomnav{display:none}
+.userhead{background:#fff;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}
+.userhead .in{max-width:1000px;margin:0 auto;height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 16px}
+.usermain{max-width:1000px;margin:0 auto;padding:24px 16px}
+@media (max-width:1023px){
+  .side{display:none}.main{padding:16px 16px 96px}
+  .topbar{display:flex;position:sticky;top:0;z-index:20;height:56px;align-items:center;justify-content:space-between;padding:0 16px;background:#fff;border-bottom:1px solid var(--border)}
+  .bottomnav{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;bottom:0;left:0;right:0;z-index:30;background:#fff;border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom)}
+  .bottomnav a{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0;font-size:11px;color:var(--muted);text-decoration:none;cursor:pointer}
+  .bottomnav a.active{color:var(--red)}
+}
+.ic{width:18px;height:18px;flex:none}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.between{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.grid3{display:grid;gap:16px;grid-template-columns:repeat(3,1fr)}
+@media (max-width:760px){.grid3{grid-template-columns:1fr}}
+.section{margin-top:20px}
+/* Import */
+.drop{border:2px dashed #d1d5db;border-radius:var(--radius);background:#fff;padding:36px 16px;text-align:center}
+.drop.drag{border-color:var(--red);background:#fff7f7}
+.filelist{list-style:none;margin:0;padding:0}
+.filelist li{display:flex;gap:12px;align-items:center;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap}
+.fthumb{width:60px;height:60px;border-radius:8px;background:#f3f4f6;flex:none;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;font-size:10px;font-weight:700;color:var(--muted)}
+.fthumb img{width:100%;height:100%;object-fit:cover}
+.finfo{flex:1;min-width:160px}.finfo .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{height:4px;background:#f3f4f6;border-radius:4px;overflow:hidden;margin-top:6px}.bar>div{height:100%;background:var(--red);transition:width .2s}
+.bar.ok>div{background:var(--green)}
+.err{color:var(--red);font-size:12px;font-weight:600;margin-top:4px}
+.warn{color:#b45309}
+/* Photothèque */
+.seg{display:inline-flex;border:1px solid var(--border);background:#f9fafb;border-radius:9px;padding:2px}
+.seg button{border:0;background:none;padding:6px 12px;border-radius:7px;color:var(--muted);font-weight:500;cursor:pointer}
+.seg button.on{background:#fff;color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.mgrid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));margin-top:14px}
+@media (max-width:520px){.mgrid{grid-template-columns:repeat(2,1fr);gap:10px}}
+.mcard{background:#fff;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative}
+.mcard.sel{outline:2px solid var(--fg);outline-offset:2px}
+.mcard .ph{aspect-ratio:1;background:#f3f4f6;display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;overflow:hidden;width:100%;border:0;padding:0}
+.mcard .ph img{width:100%;height:100%;object-fit:cover}
+.mcard .meta{padding:9px 10px}.mcard .meta div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mcard .st{position:absolute;top:8px;right:8px}
+.mcard .vd{position:absolute;bottom:8px;left:8px}
+.mcard .play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.mcard .play span{width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff}
+.chk{width:20px;height:20px;border-radius:6px;border:2px solid #d1d5db;background:rgba(255,255,255,.95);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:none;padding:0}
+.chk.on{background:var(--fg);border-color:var(--fg);color:#fff}
+.mcard .chk{position:absolute;top:8px;left:8px;z-index:2}
+.selbar{position:fixed;left:0;right:0;bottom:20px;z-index:40;padding:0 12px}
+@media (min-width:1024px){.selbar{left:240px}}
+@media (max-width:1023px){.selbar{bottom:72px}}
+.selbar .in{max-width:900px;margin:0 auto;background:#fff;border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.15);padding:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.filters{display:grid;gap:14px;grid-template-columns:repeat(4,1fr);padding:16px;margin-top:12px}
+@media (max-width:900px){.filters{grid-template-columns:1fr 1fr}}@media (max-width:520px){.filters{grid-template-columns:1fr}}
+.skel{aspect-ratio:1;background:linear-gradient(90deg,#f3f4f6,#e9eaee,#f3f4f6);background-size:200% 100%;animation:sh 1.2s infinite;border-radius:var(--radius)}
+@keyframes sh{to{background-position:-200% 0}}
+/* Modale */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:50;display:flex}
+.detail{background:#fff;margin:24px;border-radius:16px;overflow:hidden;display:flex;flex:1}
+.viewer{flex:1;background:#0a0a0a;display:flex;align-items:center;justify-content:center;position:relative;min-height:40vh}
+.viewer img,.viewer video{max-width:100%;max-height:100%;object-fit:contain}
+.viewer .nv{position:absolute;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;border:0;background:rgba(255,255,255,.12);color:#fff;font-size:22px;cursor:pointer}
+.info{width:380px;flex:none;display:flex;flex-direction:column;overflow-y:auto;border-left:1px solid var(--border)}
+.info dl{display:grid;grid-template-columns:auto 1fr;gap:10px 16px;padding:20px;margin:0}
+.info dt{color:var(--muted)}.info dd{margin:0}
+@media (max-width:1023px){.detail{margin:0;border-radius:0;flex-direction:column;overflow-y:auto}.info{width:100%;border-left:0;border-top:1px solid var(--border);overflow:visible}.viewer{min-height:45vh;flex:none;height:45vh}}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}
+.modal .box{background:#fff;border-radius:14px;max-width:440px;width:100%;padding:22px}
+.modal .icon{width:40px;height:40px;border-radius:50%;background:var(--red-soft);display:flex;align-items:center;justify-content:center;color:var(--red);font-weight:800;margin-bottom:12px}
+/* Tableau de bord */
+.stats{display:grid;gap:12px;grid-template-columns:repeat(7,1fr)}
+@media (max-width:1280px){.stats{grid-template-columns:repeat(4,1fr)}}@media (max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat{padding:14px;cursor:pointer}.stat .v{font-size:28px;font-weight:700;margin-top:6px;font-variant-numeric:tabular-nums}
+.dash{display:grid;gap:24px;grid-template-columns:2fr 1fr;margin-top:24px}
+@media (max-width:1100px){.dash{grid-template-columns:1fr}}
+.recent{display:grid;gap:8px;grid-template-columns:repeat(6,1fr)}
+@media (max-width:700px){.recent{grid-template-columns:repeat(3,1fr)}}
+.recent div{aspect-ratio:1;border-radius:8px;background:#f3f4f6;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--muted)}
+.recent img{width:100%;height:100%;object-fit:cover}
+.dot{position:absolute;top:5px;right:5px;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 2px #fff}
+.list{list-style:none;margin:0;padding:0}.list li{padding:10px 14px;border-top:1px solid var(--border)}.list li:first-child{border-top:0}
+.cats{display:grid;gap:16px;grid-template-columns:1fr 1fr;margin-top:16px}@media (max-width:900px){.cats{grid-template-columns:1fr}}
+.cat header{display:flex;align-items:center;gap:4px;padding:10px 12px 10px 16px;border-bottom:1px solid var(--border)}
+.cat li{display:flex;align-items:center;gap:4px;padding:4px 12px 4px 16px;border-top:1px solid var(--border)}
+.iconbtn{width:30px;height:30px;border:0;background:none;border-radius:6px;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
+.iconbtn:hover:not(:disabled){background:#f3f4f6;color:var(--fg)}.iconbtn:disabled{opacity:.3;cursor:default}
+.strike{text-decoration:line-through;color:var(--muted)}
+#toasts{position:fixed;right:20px;bottom:20px;z-index:100;display:flex;flex-direction:column;gap:8px;max-width:360px}
+@media (max-width:1023px){#toasts{left:16px;right:16px;bottom:80px;max-width:none}}
+.toast{background:#fff;border:1px solid var(--border);border-left:4px solid var(--green);border-radius:10px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.toast.error{border-left-color:var(--red)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modal-root"></div>
+<div id="toasts"></div>
+
+<script>
+/* ============================================================================
+   Photothèque Croix-Rouge — interface (Index.html)
+   Toutes les permissions sont vérifiées côté serveur (Code.gs) ; l'interface
+   ne fait que masquer ce qui n'est pas autorisé.
+   ========================================================================= */
+
+// ---------------------------------------------------------------- utilitaires
+const PHOTO_EXT = ['jpg','jpeg','jpe','png','heic','heif','hif','webp','gif','tif','tiff','bmp','avif','dng','cr2','cr3','nef','arw','orf','rw2','raf'];
+const VIDEO_EXT = ['mp4','m4v','mov','qt','avi','mkv','webm','3gp','3g2','mts','m2ts','mpg','mpeg','wmv'];
+const ACCEPT = 'image/*,video/*,' + PHOTO_EXT.concat(VIDEO_EXT).map(e => '.' + e).join(',');
+const TZ = 'Europe/Paris';
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $ = sel => document.querySelector(sel);
+const ext = name => (/\.([^./\\]+)$/.exec(name) || [,''])[1].toLowerCase();
+const kindOf = name => PHOTO_EXT.includes(ext(name)) ? 'PHOTO' : VIDEO_EXT.includes(ext(name)) ? 'VIDEO' : null;
+const nf = n => new Intl.NumberFormat('fr-FR').format(n || 0);
+const plural = (n, s, p) => nf(n) + ' ' + (n > 1 ? (p || s + 's') : s);
+function fmtBytes(b){ if(!b) return '0 o'; const u=['o','Ko','Mo','Go','To']; const e=Math.min(Math.floor(Math.log(b)/Math.log(1024)),4); return (b/Math.pow(1024,e)).toLocaleString('fr-FR',{maximumFractionDigits:e?1:0})+' '+u[e]; }
+function fmtDate(iso, time){ if(!iso) return '—'; return new Intl.DateTimeFormat('fr-FR', Object.assign({dateStyle:'medium', timeZone:TZ}, time?{timeStyle:'short'}:{})).format(new Date(iso)); }
+function fmtDur(s){ if(!s) return ''; s=Math.round(s); const m=Math.floor(s/60), r=s%60; return m+':'+String(r).padStart(2,'0'); }
+function toLocalInput(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+const CROSS = '<svg class="cross" viewBox="0 0 32 32" aria-hidden="true"><path fill="#E3000F" d="M11 2h10v9h9v10h-9v9H11v-9H2V11h9z"/></svg>';
+const I = {
+  dash:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>',
+  photos:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>',
+  upload:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>',
+  cats:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h12M3 18h7"/></svg>',
+  gear:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  out:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>',
+  eye:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  check:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M20 6 9 17l-5-5"/></svg>',
+  play:'<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+};
+
+// ---------------------------------------------------------------- appels serveur
+function call(fn, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(err => {
+        const msg = (err && err.message) || String(err);
+        if (msg.indexOf('SESSION:') >= 0) { logout(true); return reject(new Error(msg.replace(/.*SESSION:\s*/, ''))); }
+        reject(new Error(msg.replace(/^Exception:\s*/, '').replace(/^Error:\s*/, '')));
+      })[fn](...args);
+  });
+}
+const api = (fn, ...args) => call(fn, state.token, ...args);
+
+function toast(message, kind) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind === 'error' ? ' error' : '');
+  el.textContent = message;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), kind === 'error' ? 7000 : 4000);
+}
+
+// ---------------------------------------------------------------- état global
+const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }, set(k,v){ try { v==null?localStorage.removeItem(k):localStorage.setItem(k,v); } catch(e){} } };
+const state = { token: store.get('crf_token'), role: null, name: '', view: 'login' };
+
+function logout(expired) {
+  if (state.token) store.set('crf_token', null);
+  state.token = null; state.role = null; state.view = 'login';
+  closeModal(); closeDetail();
+  render();
+  if (expired) toast('Session expirée. Veuillez vous reconnecter.', 'error');
+}
+
+function go(view) {
+  if (state.role !== 'ADMIN' && view !== 'import') view = 'import';
+  state.view = view;
+  closeDetail();
+  render();
+  window.scrollTo(0, 0);
+}
+
+// ---------------------------------------------------------------- rendu
+const NAV = [
+  ['dashboard', 'Tableau de bord', 'Accueil', 'dash'],
+  ['library', 'Photothèque', 'Photos', 'photos'],
+  ['import', 'Importer des médias', 'Importer', 'upload'],
+  ['categories', 'Catégories & activités', 'Catégories', 'cats'],
+  ['settings', 'Paramètres', 'Réglages', 'gear'],
+];
+
+function render() {
+  const app = $('#app');
+  if (!state.token || !state.role) { app.innerHTML = loginView(); bindLogin(); return; }
+  const content = '<div id="view"></div>';
+  if (state.role !== 'ADMIN') {
+    app.innerHTML = `<header class="userhead"><div class="in"><div class="brand" style="margin:0">${CROSS}<div><b>Photothèque</b><span>Croix-Rouge · Boulogne-Billancourt</span></div></div>
+      <button class="btn btn-ghost" onclick="logout()">${I.out}<span>Déconnexion</span></button></div></header><main class="usermain">${content}</main>`;
+  } else {
+    const links = NAV.map(n => `<a class="${state.view===n[0]?'active':''}" onclick="go('${n[0]}')">${I[n[3]].replace('class="ic"','class="ic"')}${n[1]}</a>`).join('');
+    const bottom = NAV.map(n => `<a class="${state.view===n[0]?'active':''}" onclick="go('${n[0]}')">${I[n[3]]}${n[2]}</a>`).join('');
+    app.innerHTML = `<div class="shell"><aside class="side"><div class="brand">${CROSS}<div><b>Photothèque</b><span>Croix-Rouge · Boulogne-Billancourt</span></div></div>
+      <nav class="nav">${links}</nav><div style="margin-top:auto;border-top:1px solid var(--border);padding-top:14px">
+      <div style="padding:0 12px 10px"><b>${esc(state.name)}</b><div class="small muted">Administrateur</div></div>
+      <nav class="nav"><a onclick="logout()">${I.out}Déconnexion</a></nav></div></aside>
+      <div style="flex:1;min-width:0"><div class="topbar"><div class="brand" style="margin:0">${CROSS}<div><b>Photothèque</b><span>Croix-Rouge · Boulogne-Billancourt</span></div></div>
+      <button class="iconbtn" onclick="logout()" aria-label="Déconnexion">${I.out}</button></div>
+      <main class="main">${content}</main></div></div><nav class="bottomnav">${bottom}</nav>`;
+  }
+  ({ import: renderImport, dashboard: renderDashboard, library: renderLibrary, categories: renderCategories, settings: renderSettings }[state.view] || renderImport)();
+}
+
+// ================================================================ CONNEXION
+function loginView() {
+  return `<div class="login"><div class="box">
+    <div class="logo">${CROSS.replace('class="cross"','style="width:40px;height:40px"')}</div>
+    <h1>Photothèque</h1><p class="muted" style="margin:0 0 24px">Croix-Rouge française<br>Unité locale de Boulogne-Billancourt</p>
+    <form id="login-form" class="card" style="padding:22px;text-align:left">
+      <label class="lbl" for="pw">Mot de passe</label>
+      <div class="pw"><input id="pw" class="input" type="password" autocomplete="current-password" required autofocus>
+        <button type="button" id="pw-toggle" aria-label="Afficher le mot de passe">${I.eye}</button></div>
+      <div id="login-err" class="alert hidden" style="margin-top:12px"></div>
+      <button class="btn btn-primary btn-block" style="height:44px;margin-top:16px" id="login-btn">Se connecter</button>
+    </form><p class="small muted" style="margin-top:20px">Accès réservé aux bénévoles de l'unité locale.</p></div></div>`;
+}
+
+function bindLogin() {
+  const pw = $('#pw');
+  $('#pw-toggle').onclick = () => {
+    pw.type = pw.type === 'password' ? 'text' : 'password';
+    $('#pw-toggle').setAttribute('aria-label', pw.type === 'password' ? 'Afficher le mot de passe' : 'Masquer le mot de passe');
+  };
+  $('#login-form').onsubmit = async e => {
+    e.preventDefault();
+    const btn = $('#login-btn'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Connexion…';
+    $('#login-err').classList.add('hidden');
+    try {
+      const r = await call('login', pw.value);
+      state.token = r.token; state.role = r.role; state.name = r.name;
+      store.set('crf_token', r.token);
+      go(r.role === 'ADMIN' ? 'dashboard' : 'import');
+    } catch (err) {
+      $('#login-err').textContent = err.message; $('#login-err').classList.remove('hidden');
+      pw.value = ''; btn.disabled = false; btn.textContent = 'Se connecter';
+    }
+  };
+}
+
+// ================================================================ CATALOGUE (cache)
+let catalogCache = { active: null, all: null };
+async function loadCatalog(all, force) {
+  const key = all ? 'all' : 'active';
+  if (!catalogCache[key] || force) catalogCache[key] = await api('getCatalog', Boolean(all));
+  return catalogCache[key];
+}
+
+// ================================================================ IMPORTATION
+const imp = { items: [], rejected: [], running: false, photographer: store.get('crf_photographer') || '', categoryId: '', activityId: '', error: '' };
+let impSeq = 0;
+
+async function renderImport() {
+  const v = $('#view');
+  v.innerHTML = `<h1>Importer des médias</h1>
+    <p class="muted" style="margin:0">Photos et vidéos sont conservées dans leur format et leur qualité d'origine. Chaque média importé est enregistré « À trier ».</p>
+    <div class="card section" style="padding:18px">
+      <div class="small muted" style="font-weight:700;letter-spacing:.05em;margin-bottom:14px">INFORMATIONS</div>
+      <div class="grid3">
+        <div><label class="lbl" for="ph">Photographe *</label><input id="ph" class="input" placeholder="Prénom Nom" value="${esc(imp.photographer)}"></div>
+        <div><label class="lbl" for="cat">Catégorie *</label><select id="cat" class="select"><option value="">Chargement…</option></select></div>
+        <div><label class="lbl" for="act">Activité *</label><select id="act" class="select" disabled><option value="">Choisissez d'abord une catégorie</option></select></div>
+      </div></div>
+    <div id="drop" class="drop section">
+      <div style="font-size:32px">🖼️</div>
+      <p style="font-weight:600;margin:8px 0 2px">Glissez-déposez vos photos et vidéos ici</p>
+      <p class="small muted" style="margin:0">JPG, PNG, HEIC, HEIF, WEBP, RAW… · MP4, MOV, AVI, MKV…</p>
+      <button class="btn btn-outline" style="margin-top:14px" id="pick">${I.upload} Sélectionner des fichiers</button>
+      <input type="file" id="file" multiple accept="${ACCEPT}" class="hidden">
+    </div>
+    <div id="rejected"></div><div id="queue"></div>`;
+
+  $('#ph').oninput = e => { imp.photographer = e.target.value; };
+  $('#pick').onclick = () => $('#file').click();
+  $('#file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+  const drop = $('#drop');
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('drag'); };
+  drop.ondragleave = () => drop.classList.remove('drag');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('drag'); if (!imp.running) addFiles(e.dataTransfer.files); };
+
+  try {
+    const cats = await loadCatalog(false, true);
+    const sel = $('#cat'); if (!sel) return;
+    sel.innerHTML = '<option value="">Choisir une catégorie</option>' + cats.map(c => `<option value="${c.id}" ${c.id===imp.categoryId?'selected':''}>${esc(c.name)}</option>`).join('');
+    const fillActs = () => {
+      const c = cats.find(x => x.id === imp.categoryId);
+      const a = $('#act');
+      a.disabled = !c;
+      a.innerHTML = c ? '<option value="">Choisir une activité</option>' + c.activities.map(x => `<option value="${x.id}" ${x.id===imp.activityId?'selected':''}>${esc(x.name)}</option>`).join('')
+                      : '<option value="">Choisissez d\'abord une catégorie</option>';
+    };
+    sel.onchange = () => { imp.categoryId = sel.value; imp.activityId = ''; fillActs(); };
+    $('#act').onchange = e => { imp.activityId = e.target.value; };
+    fillActs();
+  } catch (err) { toast('Impossible de charger les catégories : ' + err.message, 'error'); }
+  renderQueue();
+}
+
+function addFiles(list) {
+  const known = new Set(imp.items.map(i => i.file.name + i.file.size + i.file.lastModified));
+  const added = [];
+  Array.from(list).forEach(file => {
+    const key = file.name + file.size + file.lastModified;
+    if (known.has(key)) return; known.add(key);
+    const kind = kindOf(file.name);
+    if (!kind) { imp.rejected.unshift({ name: file.name, reason: "Ce fichier n'est pas compatible." }); return; }
+    if (!file.size) { imp.rejected.unshift({ name: file.name, reason: 'Le fichier est vide.' }); return; }
+    added.push({ key: 'f' + (++impSeq), file, kind, state: 'analyzing', progress: 0 });
+  });
+  imp.items = imp.items.filter(i => i.state !== 'done').concat(added);
+  renderQueue();
+  analyze(added);
+}
+
+async function analyze(items) {
+  const queue = items.slice();
+  const worker = async () => {
+    while (queue.length) {
+      const it = queue.shift();
+      try {
+        const [info, deriv] = await Promise.all([extractDate(it.file, it.kind), makeDerivatives(it.file, it.kind).catch(() => null)]);
+        it.captureDate = info.date; it.dateSource = info.source; it.deriv = deriv;
+        if (deriv) it.preview = URL.createObjectURL(deriv.thumb);
+      } catch (e) { it.captureDate = new Date(it.file.lastModified || Date.now()); it.dateSource = 'FILE_DATE'; }
+      if (it.state === 'analyzing') it.state = 'ready';
+      renderQueue();
+    }
+  };
+  await Promise.all([worker(), worker()]);
+}
+
+const SRC_LABEL = { EXIF: 'Date EXIF', VIDEO_METADATA: 'Date de la vidéo', FILE_DATE: 'Date du fichier — à vérifier', MANUAL: 'Date modifiée' };
+
+function renderQueue() {
+  const rj = $('#rejected'), q = $('#queue'); if (!q) return;
+  rj.innerHTML = imp.rejected.length ? `<div class="card section" style="padding:14px;border-color:#fecaca;background:#fff7f7">
+      <div class="between"><b style="color:#b91c1c">Fichiers refusés</b><button class="btn btn-ghost btn-sm" onclick="imp.rejected=[];renderQueue()">Masquer</button></div>
+      ${imp.rejected.slice(0, 30).map(r => `<div style="color:#b91c1c;margin-top:4px">⚠ <b>${esc(r.name)}</b> — ${esc(r.reason)}</div>`).join('')}</div>` : '';
+  if (!imp.items.length) { q.innerHTML = ''; return; }
+
+  const items = imp.items;
+  const pending = items.filter(i => i.state === 'ready' || i.state === 'error');
+  const failed = items.filter(i => i.state === 'error');
+  const analyzing = items.filter(i => i.state === 'analyzing').length;
+  const done = items.filter(i => i.state === 'done').length;
+  const total = items.filter(i => i.state !== 'analyzing').length;
+  const finished = !imp.running && total > 0 && done === total;
+  const overall = total ? items.reduce((s, i) => s + (i.state === 'done' ? 1 : i.state === 'uploading' ? i.progress : 0), 0) / total : 0;
+
+  const head = imp.running ? `Importation : ${done} / ${total}` : finished ? '<span style="color:var(--green)">Importation terminée ✓</span>' : plural(items.length, 'fichier sélectionné', 'fichiers sélectionnés');
+  q.innerHTML = `<div class="card section">
+    <div class="between" style="padding:14px 16px;align-items:center">
+      <div><b>${head}</b><div class="small muted">${fmtBytes(items.reduce((s, i) => s + i.file.size, 0))}${analyzing ? ' · analyse de ' + analyzing + ' fichier(s)…' : ''}</div></div>
+      <div class="row">
+        ${!imp.running && pending.length ? `<input type="datetime-local" id="bulkdate" class="input" style="width:200px"><button class="btn btn-outline btn-sm" style="height:38px" onclick="applyBulkDate()">Appliquer à tous</button>` : ''}
+        ${finished ? '<button class="btn btn-outline" onclick="imp.items=[];renderQueue()">Nouvelle importation</button>' : ''}
+        ${!imp.running && failed.length && failed.length < pending.length ? `<button class="btn btn-outline" onclick="startImport(true)">↻ Réessayer les échecs (${failed.length})</button>` : ''}
+        ${pending.length ? `<button class="btn btn-primary" onclick="startImport(false)" ${imp.running || analyzing ? 'disabled' : ''}>${imp.running ? '<span class="spin"></span>' : ''}${failed.length === pending.length ? '↻ Réessayer (' + failed.length + ')' : 'Importer ' + plural(pending.length, 'fichier')}</button>` : ''}
+      </div></div>
+    ${imp.running || done ? `<div class="bar ${finished ? 'ok' : ''}" style="margin:0;border-radius:0"><div style="width:${Math.round(overall * 100)}%"></div></div>` : ''}
+    ${imp.error ? `<div class="alert" style="margin:12px 16px">${esc(imp.error)}</div>` : ''}
+    <ul class="filelist">${items.map(itemRow).join('')}</ul></div>`;
+}
+
+function itemRow(it) {
+  const thumb = it.preview ? `<img src="${it.preview}" alt="">` : it.state === 'analyzing' ? '<span class="spin"></span>' : (it.kind === 'VIDEO' ? '🎬' : ext(it.file.name).toUpperCase());
+  let right = '';
+  if (it.state === 'done') right = '<span style="color:var(--green);font-weight:700">✓</span>';
+  else if (it.state === 'uploading') right = `<span class="small muted">${Math.round(it.progress * 100)} %</span>`;
+  else right = `<button class="iconbtn" ${imp.running ? 'disabled' : ''} onclick="removeItem('${it.key}')" aria-label="Retirer">✕</button>`;
+  const date = it.captureDate && it.state !== 'done' ? `<div><input type="datetime-local" class="input" style="width:200px" value="${toLocalInput(it.captureDate)}" ${it.state === 'uploading' ? 'disabled' : ''} onchange="setItemDate('${it.key}', this.value)">
+      <div class="small ${it.dateSource === 'FILE_DATE' ? 'warn' : 'muted'}">${SRC_LABEL[it.dateSource] || ''}</div></div>` : '';
+  return `<li><div class="fthumb">${thumb}</div>
+    <div class="finfo"><div class="name" title="${esc(it.file.name)}">${esc(it.file.name)}</div>
+      <div class="small muted">${it.kind === 'VIDEO' ? 'Vidéo' : 'Photo'} · ${fmtBytes(it.file.size)}</div>
+      ${it.state === 'uploading' ? `<div class="bar" style="max-width:280px"><div style="width:${Math.round(it.progress * 100)}%"></div></div>` : ''}
+      ${it.state === 'error' ? `<div class="err">${esc(it.error)}</div>` : ''}</div>
+    ${date}<div style="width:40px;text-align:right">${right}</div></li>`;
+}
+
+function removeItem(key) { const it = imp.items.find(i => i.key === key); if (it && it.preview) URL.revokeObjectURL(it.preview); imp.items = imp.items.filter(i => i.key !== key); renderQueue(); }
+function setItemDate(key, value) { const it = imp.items.find(i => i.key === key); const d = new Date(value); if (it && !isNaN(d)) { it.captureDate = d; it.dateSource = 'MANUAL'; renderQueue(); } }
+function applyBulkDate() { const d = new Date($('#bulkdate').value); if (isNaN(d)) return; imp.items.forEach(i => { if (i.state === 'ready' || i.state === 'error') { i.captureDate = d; i.dateSource = 'MANUAL'; } }); renderQueue(); }
+
+let renderTimer = null;
+function renderQueueSoon() { if (!renderTimer) renderTimer = setTimeout(() => { renderTimer = null; renderQueue(); }, 150); }
+
+async function startImport(onlyFailed) {
+  imp.error = '';
+  imp.photographer = ($('#ph') && $('#ph').value || imp.photographer).trim();
+  if (!imp.photographer) imp.error = 'Veuillez renseigner le nom du photographe.';
+  else if (!imp.categoryId) imp.error = 'Veuillez choisir une catégorie.';
+  else if (!imp.activityId) imp.error = 'Veuillez choisir une activité.';
+  if (imp.error) return renderQueue();
+  store.set('crf_photographer', imp.photographer);
+
+  const queue = imp.items.filter(i => onlyFailed ? i.state === 'error' : (i.state === 'ready' || i.state === 'error'));
+  if (!queue.length) return;
+  imp.running = true;
+  queue.forEach(i => { i.state = 'uploading'; i.progress = 0; i.error = ''; });
+  renderQueue();
+  let ok = 0, ko = 0;
+  const worker = async () => {
+    while (queue.length) {
+      const it = queue.shift();
+      try { await uploadItem(it); it.state = 'done'; it.progress = 1; ok++; }
+      catch (e) { it.state = 'error'; it.progress = 0; it.error = e.message || "L'importation a échoué pour ce fichier."; ko++; }
+      renderQueue();
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  imp.running = false;
+  renderQueue();
+  if (!ko) toast('Importation terminée ✓ — ' + plural(ok, 'fichier enregistré', 'fichiers enregistrés') + '.');
+  else toast(plural(ko, 'fichier') + ' en échec. Vous pouvez réessayer.', 'error');
+}
+
+function readB64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(new Error('Lecture du fichier impossible.'));
+    r.readAsDataURL(blob);
+  });
+}
+
+/** Envoi de l'ORIGINAL inchangé, par morceaux, puis des miniatures séparées. */
+async function uploadItem(it) {
+  const f = it.file;
+  const init = await api('startUpload', {
+    filename: f.name, mimeType: f.type, size: f.size, captureDate: it.captureDate.toISOString(), captureDateSource: it.dateSource,
+    photographer: imp.photographer, categoryId: imp.categoryId, activityId: imp.activityId,
+    width: it.deriv && it.deriv.width, height: it.deriv && it.deriv.height, durationSec: it.deriv && it.deriv.duration,
+  });
+  try {
+    let offset = 0;
+    while (offset < f.size) {
+      const end = Math.min(offset + init.chunkSize, f.size);
+      const r = await api('uploadChunk', init.mediaId, offset, await readB64(f.slice(offset, end)));
+      offset = r.next;
+      it.progress = Math.min(0.97, offset / f.size);
+      renderQueueSoon();
+    }
+    if (it.deriv) {
+      await api('uploadDerivative', init.mediaId, 'thumb', await readB64(it.deriv.thumb), it.deriv.thumb.type).catch(() => null);
+      await api('uploadDerivative', init.mediaId, 'preview', await readB64(it.deriv.preview), it.deriv.preview.type).catch(() => null);
+    }
+    await api('finishUpload', init.mediaId);
+  } catch (e) {
+    api('abortUpload', init.mediaId).catch(() => null);
+    throw e;
+  }
+}
+
+// ---------- métadonnées (lecture seule : l'original n'est jamais modifié)
+async function extractDate(file, kind) {
+  if (kind === 'PHOTO' && window.exifr) {
+    try {
+      const d = await exifr.parse(file, { pick: ['DateTimeOriginal', 'CreateDate', 'DateTimeDigitized'] });
+      const v = d && (d.DateTimeOriginal || d.CreateDate || d.DateTimeDigitized);
+      if (v instanceof Date && !isNaN(v)) return { date: v, source: 'EXIF' };
+    } catch (e) {}
+  }
+  if (kind === 'VIDEO') { const d = await quickTimeDate(file); if (d) return { date: d, source: 'VIDEO_METADATA' }; }
+  return { date: new Date(file.lastModified || Date.now()), source: 'FILE_DATE' };
+}
+
+/** Date de création MP4/MOV (atome mvhd), lue par tranches. */
+async function quickTimeDate(file) {
+  const slice = async (s, l) => new DataView(await file.slice(s, Math.min(s + l, file.size)).arrayBuffer());
+  async function find(start, end, type) {
+    let off = start, guard = 0;
+    while (off + 8 <= end && guard++ < 10000) {
+      const v = await slice(off, 16); if (v.byteLength < 8) return null;
+      let size = v.getUint32(0), head = 8;
+      const name = String.fromCharCode(v.getUint8(4), v.getUint8(5), v.getUint8(6), v.getUint8(7));
+      if (size === 1 && v.byteLength >= 16) { size = Number(v.getBigUint64(8)); head = 16; } else if (size === 0) size = end - off;
+      if (size < head) return null;
+      if (name === type) return { start: off, size, head };
+      off += size;
+    }
+    return null;
+  }
+  try {
+    const moov = await find(0, file.size, 'moov'); if (!moov) return null;
+    const mvhd = await find(moov.start + moov.head, moov.start + moov.size, 'mvhd'); if (!mvhd) return null;
+    const v = await slice(mvhd.start + mvhd.head, 20);
+    const secs = v.getUint8(0) === 1 ? Number(v.getBigUint64(4)) : v.getUint32(4);
+    if (!secs) return null;
+    const d = new Date((secs - 2082844800) * 1000);
+    return d.getFullYear() > 1990 && d < new Date(Date.now() + 86400000) ? d : null;
+  } catch (e) { return null; }
+}
+
+// ---------- miniatures (copie décodée → canvas ; fichiers séparés)
+function toBlob(canvas, q) {
+  return new Promise(res => canvas.toBlob(b => {
+    if (b && b.type === 'image/webp') return res(b);
+    canvas.toBlob(j => res(j), 'image/jpeg', q);
+  }, 'image/webp', q));
+}
+async function renderVariants(src, w, h) {
+  const draw = async (max, q) => {
+    const s = Math.min(1, max / Math.max(w, h));
+    const c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(src, 0, 0, c.width, c.height);
+    return toBlob(c, q);
+  };
+  return { thumb: await draw(480, 0.78), preview: await draw(1600, 0.85), width: w, height: h };
+}
+async function makeDerivatives(file, kind) {
+  const url = URL.createObjectURL(file);
+  try {
+    if (kind === 'PHOTO') {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+      if (!img.naturalWidth) return null;
+      return await renderVariants(img, img.naturalWidth, img.naturalHeight);
+    }
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'metadata'; v.src = url;
+    await new Promise((res, rej) => { const t = setTimeout(rej, 15000); v.onloadedmetadata = () => { clearTimeout(t); res(); }; v.onerror = () => { clearTimeout(t); rej(); }; });
+    const duration = isFinite(v.duration) ? v.duration : null;
+    await new Promise((res, rej) => { const t = setTimeout(rej, 15000); v.onseeked = () => { clearTimeout(t); res(); }; v.currentTime = duration ? Math.min(1, duration / 10) : 0.01; });
+    if (!v.videoWidth) return null;
+    const out = await renderVariants(v, v.videoWidth, v.videoHeight); out.duration = duration;
+    return out;
+  } catch (e) { return null; }   // Navigateur incapable de décoder (HEIC sous Chrome…) → miniature générée par Drive
+  finally { URL.revokeObjectURL(url); }
+}
+
+// ================================================================ TÉLÉCHARGEMENTS (originaux)
+async function fetchOriginal(m, onProgress) {
+  const parts = []; let offset = 0;
+  while (offset < m.fileSize) {
+    const r = await api('downloadChunk', m.id, offset);
+    const bin = atob(r.data); const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    parts.push(bytes); offset = r.next;
+    if (onProgress) onProgress(offset / m.fileSize);
+    if (!bytes.length) break;
+  }
+  const blob = new Blob(parts, { type: m.mimeType });
+  if (blob.size !== m.fileSize) throw new Error('Téléchargement incomplet. Veuillez réessayer.');
+  return blob;
+}
+function saveBlob(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+async function downloadOne(m) {
+  toast('Téléchargement de « ' + m.originalFilename + ' »…', 'info');
+  try { saveBlob(await fetchOriginal(m), m.originalFilename); }
+  catch (e) { toast(e.message, 'error'); }
+}
+/** ZIP des ORIGINAUX, sans compression (méthode STORE), sans miniatures. */
+async function downloadZip(ids) {
+  const medias = []; const known = new Map(lib.items.map(m => [m.id, m]));
+  const missing = ids.filter(id => !known.has(id));
+  // Sélection plus large que la page chargée : on récupère les métadonnées manquantes page par page.
+  for (let off = 0; ids.some(id => !known.has(id)); off += 120) {
+    const r = await api('listMedia', Object.assign({}, lib.filters), off, 120).catch(() => ({ items: [], total: 0 }));
+    r.items.forEach(m => known.set(m.id, m));
+    if (!r.items.length || off + 120 >= r.total) break;
+  }
+  ids.forEach(id => known.get(id) && medias.push(known.get(id)));
+  if (!medias.length) return;
+  const { downloadZip: zip } = await import('https://cdn.jsdelivr.net/npm/client-zip@2.5.0/index.js');
+  const used = new Set(); const files = [];
+  for (let i = 0; i < medias.length; i++) {
+    const m = medias[i];
+    toast(`ZIP : ${i + 1} / ${medias.length} — ${m.originalFilename}`, 'info');
+    let name = m.originalFilename, n = 2;
+    while (used.has(name.toLowerCase())) { const d = m.originalFilename.lastIndexOf('.'); name = d > 0 ? m.originalFilename.slice(0, d) + ' (' + (n++) + ')' + m.originalFilename.slice(d) : m.originalFilename + ' (' + (n++) + ')'; }
+    used.add(name.toLowerCase());
+    try { files.push({ name, lastModified: new Date(m.captureDate), input: await fetchOriginal(m) }); }
+    catch (e) { toast(m.originalFilename + ' : ' + e.message, 'error'); }
+  }
+  const blob = await zip(files).blob();
+  saveBlob(blob, 'phototheque-' + new Date().toISOString().slice(0, 10) + '-' + files.length + '-medias.zip');
+  toast('Archive ZIP prête (' + files.length + ' originaux).');
+}
+
+// ================================================================ TABLEAU DE BORD
+const JLABEL = { UPLOAD: 'a importé', SORT: 'a marqué comme trié(s)', UNSORT: 'a remis « À trier »', DELETE: 'a supprimé définitivement', UPDATE: 'a modifié',
+  CATEGORY_CREATE: 'a créé la catégorie', CATEGORY_UPDATE: 'a modifié la catégorie', CATEGORY_DISABLE: 'a désactivé la catégorie', CATEGORY_ENABLE: 'a réactivé la catégorie', CATEGORY_DELETE: 'a supprimé la catégorie',
+  ACTIVITY_CREATE: "a créé l'activité", ACTIVITY_UPDATE: "a modifié l'activité", ACTIVITY_DISABLE: "a désactivé l'activité", ACTIVITY_ENABLE: "a réactivé l'activité", ACTIVITY_DELETE: "a supprimé l'activité", MAINTENANCE: 'a lancé un nettoyage' };
+const COUNTED = ['UPLOAD', 'SORT', 'UNSORT', 'DELETE'];
+
+async function renderDashboard() {
+  const v = $('#view');
+  v.innerHTML = '<h1>Tableau de bord</h1><p class="muted"><span class="spin"></span> Chargement…</p>';
+  let d;
+  try { d = await api('getDashboard'); } catch (e) { v.innerHTML = '<h1>Tableau de bord</h1><div class="alert">' + esc(e.message) + '</div>'; return; }
+  if (state.view !== 'dashboard') return;
+  const s = d.stats;
+  const card = (label, val, color, action) => `<div class="card stat" onclick="${action}"><div class="small muted">${label}</div><div class="v" style="${color ? 'color:' + color : ''}">${nf(val)}</div></div>`;
+  const maxCat = Math.max(1, ...d.breakdown.map(b => b.count));
+  v.innerHTML = `<div class="between"><div><h1>Tableau de bord</h1><p class="muted" style="margin:0">Bonjour ${esc(state.name)} · ${fmtBytes(s.totalBytes)} d'originaux conservés</p></div>
+    <div class="row"><button class="btn btn-outline" onclick="go('import')">${I.upload} Importer</button>
+    ${s.toSort ? `<button class="btn btn-primary" onclick="openLibrary({status:'TO_SORT',sort:'upload_asc'})">${plural(s.toSort, 'média')} à trier →</button>` : '<span class="badge badge-done" style="height:38px;padding:0 12px">Tout est trié</span>'}</div></div>
+    <div class="stats section">
+      ${card('Total des médias', s.total, '', "openLibrary({})")}
+      ${card('À trier', s.toSort, s.toSort ? 'var(--red)' : '', "openLibrary({status:'TO_SORT'})")}
+      ${card('Triés', s.sorted, 'var(--green)', "openLibrary({status:'SORTED'})")}
+      ${card('Photos', s.photos, '', "openLibrary({type:'PHOTO'})")}
+      ${card('Vidéos', s.videos, '', "openLibrary({type:'VIDEO'})")}
+      ${card('Importés cette semaine', s.thisWeek, '', "openLibrary({sort:'upload_desc'})")}
+      ${card('Importés ce mois', s.thisMonth, '', "openLibrary({sort:'upload_desc'})")}
+    </div>
+    <div class="dash"><div>
+      <div class="between"><h2>Derniers médias importés</h2><a class="small muted" style="cursor:pointer" onclick="openLibrary({sort:'upload_desc'})">Tout voir →</a></div>
+      <div class="recent section" id="recent">${d.recent.length ? d.recent.map(m => `<div data-thumb="${m.id}" title="${esc(m.originalFilename)}">${esc(m.extension.toUpperCase())}<span class="dot" style="background:${m.status === 'SORTED' ? 'var(--green)' : 'var(--red)'}"></span></div>`).join('') : '<p class="muted">Aucun média pour le moment.</p>'}</div>
+      <div class="between section"><h2>Médias nécessitant une action</h2>${s.toSort ? `<a class="small muted" style="cursor:pointer" onclick="openLibrary({status:'TO_SORT',sort:'upload_asc'})">Trier →</a>` : ''}</div>
+      <div class="card section"><ul class="list">${d.toSort.length ? d.toSort.map(m => `<li class="row" style="flex-wrap:nowrap"><div style="flex:1;min-width:0"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.originalFilename)}</div><div class="small muted">${esc(m.categoryName)} · ${esc(m.activityName)} · importé le ${fmtDate(m.uploadedAt)}</div></div><span class="badge badge-todo">À trier</span></li>`).join('') : '<li class="muted">Aucun média en attente de tri.</li>'}</ul></div>
+    </div><div>
+      <h2>Activité de la photothèque</h2>
+      <div class="card section"><ul class="list">${d.journal.length ? d.journal.map(j => `<li><div><b>${esc(j.actor)}</b> ${JLABEL[j.action] || esc(j.action)} ${COUNTED.includes(j.action) ? '<b>' + plural(j.count, 'média') + '</b>' : (j.details ? '« ' + esc(j.details) + ' »' : '')}</div><div class="small muted">${fmtDate(j.date, true)}${COUNTED.includes(j.action) && j.details ? ' · ' + esc(j.details) : ''}</div></li>`).join('') : '<li class="muted">Aucune activité récente.</li>'}</ul></div>
+      <h2 class="section">Répartition par catégorie</h2>
+      <div class="card section" style="padding:14px">${d.breakdown.length ? d.breakdown.map(b => `<div style="margin-bottom:10px;cursor:pointer" onclick="openLibrary({category:'${b.id}'})"><div class="between" style="align-items:center"><span>${esc(b.name)}</span><span class="muted">${nf(b.count)}</span></div><div class="bar"><div style="width:${b.count / maxCat * 100}%;background:#374151"></div></div></div>`).join('') : '<span class="muted">—</span>'}</div>
+    </div></div>`;
+  loadThumbs(d.recent.map(m => m.id), '#recent');
+}
+
+async function loadThumbs(ids, scope) {
+  for (let i = 0; i < ids.length; i += 24) {
+    const map = await api('getThumbnails', ids.slice(i, i + 24)).catch(() => ({}));
+    Object.keys(map).forEach(id => {
+      thumbCache[id] = map[id];
+      document.querySelectorAll((scope || '') + ' [data-thumb="' + id + '"]').forEach(el => { if (map[id]) el.innerHTML = '<img src="' + map[id] + '" alt="" loading="lazy">' + (el.querySelector('.dot') ? el.querySelector('.dot').outerHTML : '') + Array.from(el.querySelectorAll('.play,.vd')).map(x => x.outerHTML).join(''); });
+    });
+  }
+}
+const thumbCache = {};
+
+// ================================================================ PHOTOTHÈQUE
+const EMPTY_FILTERS = { q: '', status: '', type: '', category: '', activity: '', photographer: '', dateMode: '', dateField: 'capture', date: '', from: '', to: '', month: '', year: '', sort: 'capture_desc' };
+const lib = { filters: Object.assign({}, EMPTY_FILTERS), items: [], total: null, loading: false, done: false, selected: new Set(), showFilters: false, openId: null, reqId: 0, catalog: [] };
+const PAGE = 60;
+
+function openLibrary(f) { lib.filters = Object.assign({}, EMPTY_FILTERS, f); go('library'); }
+
+async function renderLibrary() {
+  const v = $('#view');
+  lib.catalog = await loadCatalog(true).catch(() => []);
+  if (state.view !== 'library') return;
+  const f = lib.filters;
+  const seg = (key, opts) => `<div class="seg">${opts.map(o => `<button class="${f[key] === o[0] ? 'on' : ''}" onclick="setFilter('${key}','${o[0]}')">${o[1]}</button>`).join('')}</div>`;
+  const cat = lib.catalog.find(c => c.id === f.category);
+  const activeCount = ['status', 'type', 'category', 'activity', 'photographer', 'dateMode'].filter(k => f[k]).length;
+  const years = []; for (let y = new Date().getFullYear(); y >= 2010; y--) years.push(y);
+  v.innerHTML = `<h1>Photothèque</h1><p class="muted" id="count" style="margin:0">Chargement…</p>
+    <div class="row section" style="flex-wrap:nowrap">
+      <input id="q" class="input" type="search" placeholder="Rechercher un fichier, un photographe, une activité, une catégorie…" value="${esc(f.q)}" style="flex:1;height:40px">
+      <button class="btn btn-outline" style="height:40px" onclick="lib.showFilters=!lib.showFilters;renderLibrary()">Filtres${activeCount ? ' <span class="badge badge-dark">' + activeCount + '</span>' : ''}</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      ${seg('status', [['', 'Tous'], ['TO_SORT', 'À trier'], ['SORTED', 'Triées']])}
+      ${seg('type', [['', 'Tous'], ['PHOTO', 'Photos'], ['VIDEO', 'Vidéos']])}
+      <select class="select" style="width:auto" onchange="setFilter('sort',this.value)">
+        ${[['capture_desc', 'Prise de vue : récentes'], ['capture_asc', 'Prise de vue : anciennes'], ['upload_desc', 'Importation : récentes'], ['upload_asc', 'Importation : anciennes'], ['name_asc', 'Nom : A → Z'], ['name_desc', 'Nom : Z → A']].map(o => `<option value="${o[0]}" ${f.sort === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}
+      </select>
+      ${activeCount ? `<button class="btn btn-ghost btn-sm" onclick="lib.filters=Object.assign({},EMPTY_FILTERS,{q:lib.filters.q,sort:lib.filters.sort});renderLibrary()">↺ Réinitialiser</button>` : ''}
+    </div>
+    <div class="card filters ${lib.showFilters ? '' : 'hidden'}">
+      <div><label class="lbl">Catégorie</label><select class="select" onchange="lib.filters.activity='';setFilter('category',this.value)"><option value="">Toutes</option>${lib.catalog.map(c => `<option value="${c.id}" ${c.id === f.category ? 'selected' : ''}>${esc(c.name)}${c.active ? '' : ' (désactivée)'}</option>`).join('')}</select></div>
+      <div><label class="lbl">Activité</label><select class="select" ${cat ? '' : 'disabled'} onchange="setFilter('activity',this.value)"><option value="">${cat ? 'Toutes' : 'Choisissez une catégorie'}</option>${cat ? cat.activities.map(a => `<option value="${a.id}" ${a.id === f.activity ? 'selected' : ''}>${esc(a.name)}${a.active ? '' : ' (désactivée)'}</option>`).join('') : ''}</select></div>
+      <div><label class="lbl">Photographe</label><input id="fph" class="input" placeholder="Nom du photographe" value="${esc(f.photographer)}"></div>
+      <div><label class="lbl">Date</label><div class="row" style="flex-wrap:nowrap">
+        <select class="select" onchange="setFilter('dateMode',this.value)">${[['', 'Toutes les dates'], ['date', 'Date précise'], ['range', 'Période'], ['month', 'Mois'], ['year', 'Année']].map(o => `<option value="${o[0]}" ${f.dateMode === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+        ${f.dateMode ? `<select class="select" style="width:130px" onchange="setFilter('dateField',this.value)"><option value="capture" ${f.dateField === 'capture' ? 'selected' : ''}>Prise de vue</option><option value="upload" ${f.dateField === 'upload' ? 'selected' : ''}>Importation</option></select>` : ''}</div>
+        <div style="margin-top:6px">
+        ${f.dateMode === 'date' ? `<input type="date" class="input" value="${f.date}" onchange="setFilter('date',this.value)">` : ''}
+        ${f.dateMode === 'range' ? `<div class="row" style="flex-wrap:nowrap"><input type="date" class="input" value="${f.from}" onchange="setFilter('from',this.value)"><span class="small muted">au</span><input type="date" class="input" value="${f.to}" onchange="setFilter('to',this.value)"></div>` : ''}
+        ${f.dateMode === 'month' ? `<input type="month" class="input" value="${f.month}" onchange="setFilter('month',this.value)">` : ''}
+        ${f.dateMode === 'year' ? `<select class="select" onchange="setFilter('year',this.value)"><option value="">Choisir…</option>${years.map(y => `<option ${String(y) === String(f.year) ? 'selected' : ''}>${y}</option>`).join('')}</select>` : ''}
+        </div></div>
+    </div>
+    <div class="row section" id="selrow"></div>
+    <div class="mgrid" id="grid"></div>
+    <div id="sentinel" style="height:1px"></div>
+    <div id="selbar"></div>`;
+
+  let t1, t2;
+  $('#q').oninput = e => { clearTimeout(t1); t1 = setTimeout(() => { lib.filters.q = e.target.value; reloadLibrary(); }, 350); };
+  $('#fph').oninput = e => { clearTimeout(t2); t2 = setTimeout(() => { lib.filters.photographer = e.target.value; reloadLibrary(); }, 350); };
+  const io = new IntersectionObserver(en => { if (en[0].isIntersecting) loadMore(); }, { rootMargin: '800px' });
+  io.observe($('#sentinel'));
+  reloadLibrary();
+}
+
+function setFilter(key, value) { lib.filters[key] = value; renderLibrary(); }
+
+function reloadLibrary() {
+  lib.items = []; lib.total = null; lib.done = false; lib.loading = false; lib.selected = new Set();
+  lib.reqId++;
+  $('#grid').innerHTML = '';
+  renderSelection();
+  loadMore();
+}
+
+async function loadMore() {
+  if (lib.loading || lib.done || state.view !== 'library') return;
+  lib.loading = true;
+  const req = lib.reqId;
+  const grid = $('#grid');
+  grid.insertAdjacentHTML('beforeend', Array(lib.items.length ? 6 : 12).fill('<div class="skel"></div>').join(''));
+  try {
+    const r = await api('listMedia', lib.filters, lib.items.length, PAGE);
+    if (req !== lib.reqId) return;
+    grid.querySelectorAll('.skel').forEach(s => s.remove());
+    lib.total = r.total;
+    lib.items = lib.items.concat(r.items);
+    lib.done = lib.items.length >= r.total || !r.items.length;
+    grid.insertAdjacentHTML('beforeend', r.items.map(cardHtml).join(''));
+    $('#count').textContent = r.total ? plural(r.total, 'média') : 'Aucun média';
+    if (!lib.items.length) grid.innerHTML = '<div class="card" style="grid-column:1/-1;padding:60px;text-align:center"><b>Aucun média ne correspond à ces critères</b><p class="muted">Modifiez la recherche ou les filtres.</p></div>';
+    renderSelection();
+    const need = r.items.filter(m => thumbCache[m.id] === undefined).map(m => m.id);
+    r.items.forEach(m => { if (thumbCache[m.id]) setCardThumb(m.id, thumbCache[m.id]); });
+    if (need.length) loadThumbs(need, '#grid');
+  } catch (e) {
+    grid.querySelectorAll('.skel').forEach(s => s.remove());
+    toast(e.message, 'error');
+  } finally { if (req === lib.reqId) lib.loading = false; }
+}
+
+function setCardThumb(id, url) {
+  const el = document.querySelector('#grid [data-thumb="' + id + '"]');
+  if (el && url) el.innerHTML = '<img src="' + url + '" alt="" loading="lazy">' + Array.from(el.querySelectorAll('.play,.vd')).map(x => x.outerHTML).join('');
+}
+
+function cardHtml(m) {
+  const sel = lib.selected.has(m.id);
+  const video = m.mediaType === 'VIDEO';
+  return `<article class="mcard ${sel ? 'sel' : ''}" id="card-${m.id}">
+    <button class="chk ${sel ? 'on' : ''}" onclick="toggleSel('${m.id}')" aria-label="Sélectionner">${sel ? I.check : ''}</button>
+    <button class="ph" data-thumb="${m.id}" onclick="cardClick(event,'${m.id}')">${video ? '' : `<b class="muted">${esc(m.extension.toUpperCase())}</b>`}${video ? `<span class="play"><span>${I.play}</span></span><span class="badge badge-dark vd">Vidéo${m.durationSec ? ' · ' + fmtDur(m.durationSec) : ''}</span>` : ''}</button>
+    <span class="badge ${m.status === 'SORTED' ? 'badge-done' : 'badge-todo'} st" style="background:#fff">${m.status === 'SORTED' ? 'Triée' : 'À trier'}</span>
+    <div class="meta"><div style="font-weight:600;font-size:13px" title="${esc(m.originalFilename)}">${esc(m.originalFilename)}</div>
+      <div class="small muted">${esc(m.categoryName)} · ${esc(m.activityName)}</div>
+      <div class="small muted">${fmtDate(m.captureDate)} · ${esc(m.photographer)}</div></div></article>`;
+}
+
+function cardClick(e, id) { if (lib.selected.size || e.ctrlKey || e.metaKey || e.shiftKey) toggleSel(id); else openDetail(id); }
+
+function toggleSel(id) {
+  if (lib.selected.has(id)) lib.selected.delete(id); else lib.selected.add(id);
+  refreshCard(id); renderSelection();
+}
+function refreshCard(id) {
+  const m = lib.items.find(x => x.id === id); const el = document.getElementById('card-' + id);
+  if (!m || !el) return;
+  el.outerHTML = cardHtml(m);
+  if (thumbCache[id]) setCardThumb(id, thumbCache[id]);
+}
+
+function renderSelection() {
+  const n = lib.selected.size;
+  const row = $('#selrow'); if (!row) return;
+  const all = lib.items.length && lib.items.every(m => lib.selected.has(m.id));
+  row.innerHTML = `<button class="chk ${all ? 'on' : ''}" onclick="${all ? 'clearSel()' : 'selectAll()'}" aria-label="Tout sélectionner">${all ? I.check : ''}</button>
+    <a style="cursor:pointer;font-weight:600" onclick="selectAll()">Tout sélectionner${lib.total ? ' (' + nf(lib.total) + ')' : ''}</a>
+    ${n ? `<span class="muted">·</span><a style="cursor:pointer;font-weight:600" onclick="clearSel()">Tout désélectionner</a><span class="badge badge-dark">${plural(n, 'média sélectionné', 'médias sélectionnés')}</span>` : ''}`;
+  $('#selbar').innerHTML = n ? `<div class="selbar"><div class="in"><b style="padding:0 8px">${plural(n, 'média sélectionné', 'médias sélectionnés')}</b>
+    <div class="row" style="margin-left:auto">
+      <button class="btn btn-outline btn-sm" onclick="downloadZip([...lib.selected])">⬇ Télécharger la sélection</button>
+      <button class="btn btn-success btn-sm" onclick="bulkStatus('SORTED')">✓ Marquer comme triées</button>
+      <button class="btn btn-outline btn-sm" onclick="bulkStatus('TO_SORT')">Marquer comme à trier</button>
+      <button class="btn btn-danger-outline btn-sm" onclick="confirmBulkDelete()">🗑 Supprimer la sélection</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearSel()">✕ Désélectionner</button></div></div></div>` : '';
+}
+async function selectAll() {
+  try { (await api('listMediaIds', lib.filters)).forEach(id => lib.selected.add(id)); }
+  catch (e) { lib.items.forEach(m => lib.selected.add(m.id)); }
+  lib.items.forEach(m => refreshCard(m.id)); renderSelection();
+}
+function clearSel() { const ids = [...lib.selected]; lib.selected = new Set(); ids.forEach(refreshCard); renderSelection(); }
+
+function removeFromLibrary(ids) {
+  const set = new Set(ids);
+  lib.items = lib.items.filter(m => !set.has(m.id));
+  ids.forEach(id => { lib.selected.delete(id); const el = document.getElementById('card-' + id); if (el) el.remove(); });
+  if (lib.total != null) { lib.total = Math.max(0, lib.total - ids.length); $('#count').textContent = lib.total ? plural(lib.total, 'média') : 'Aucun média'; }
+  renderSelection();
+}
+
+async function bulkStatus(status) {
+  const ids = [...lib.selected];
+  try {
+    const r = await api('bulkStatus', ids, status);
+    toast(plural(r.updated, 'média') + (status === 'SORTED' ? ' marqué(s) comme trié(s).' : ' remis « À trier ».'));
+    if (lib.filters.status && lib.filters.status !== status) removeFromLibrary(ids);
+    else { lib.items.forEach(m => { if (lib.selected.has(m.id)) m.status = status; }); clearSel(); }
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function confirmBulkDelete() {
+  const ids = [...lib.selected];
+  confirmModal('Supprimer définitivement ' + plural(ids.length, 'média') + ' ?', 'Cette action est irréversible. Les fichiers originaux et leurs données associées seront supprimés.', async () => {
+    const r = await api('deleteMedia', ids);
+    removeFromLibrary(r.deleted);
+    if (r.failed.length) toast(plural(r.deleted.length, 'média') + ' supprimé(s). ' + r.failed.length + ' en échec : ' + r.failed[0].error, 'error');
+    else toast(plural(r.deleted.length, 'média') + ' supprimé(s) définitivement.');
+  });
+}
+
+// ---------- fiche détaillée
+let detailBlobUrl = null;
+function closeDetail() { lib.openId = null; const o = document.getElementById('detail'); if (o) o.remove(); if (detailBlobUrl) { URL.revokeObjectURL(detailBlobUrl); detailBlobUrl = null; } document.onkeydown = null; }
+
+function openDetail(id, editing) {
+  closeDetail();
+  const idx = lib.items.findIndex(m => m.id === id); const m = lib.items[idx]; if (!m) return;
+  lib.openId = id;
+  const prev = lib.items[idx - 1], next = lib.items[idx + 1];
+  const SRC = { EXIF: 'EXIF', VIDEO_METADATA: 'métadonnées vidéo', FILE_DATE: 'date du fichier', MANUAL: 'saisie manuelle' };
+  const cats = lib.catalog;
+  const editForm = `<form id="editf" style="padding:20px;display:grid;gap:12px">
+      <div><label class="lbl">Photographe</label><input class="input" name="photographer" value="${esc(m.photographer)}" required></div>
+      <div><label class="lbl">Date de prise de vue</label><input class="input" type="datetime-local" name="captureDate" value="${toLocalInput(new Date(m.captureDate))}" required></div>
+      <div><label class="lbl">Catégorie</label><select class="select" name="categoryId" id="ecat">${cats.filter(c => c.active || c.id === m.categoryId).map(c => `<option value="${c.id}" ${c.id === m.categoryId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+      <div><label class="lbl">Activité</label><select class="select" name="activityId" id="eact"></select></div>
+      <div class="row"><button type="button" class="btn btn-outline" style="flex:1" onclick="openDetail('${m.id}')">Annuler</button><button class="btn btn-success" style="flex:1">Enregistrer</button></div></form>`;
+  const infos = `<dl><dt>Prise de vue</dt><dd>${fmtDate(m.captureDate, true)}<div class="small muted">source : ${SRC[m.captureDateSource] || '—'}</div></dd>
+      <dt>Photographe</dt><dd>${esc(m.photographer)}</dd><dt>Catégorie</dt><dd>${esc(m.categoryName)}</dd><dt>Activité</dt><dd>${esc(m.activityName)}</dd>
+      ${m.width ? `<dt>Dimensions</dt><dd>${m.width} × ${m.height} px${m.durationSec ? ' · ' + fmtDur(m.durationSec) : ''}</dd>` : ''}
+      <dt>Importé le</dt><dd>${fmtDate(m.uploadedAt, true)}${m.uploadedBy ? '<div class="small muted">par ' + esc(m.uploadedBy) + '</div>' : ''}</dd>
+      ${m.status === 'SORTED' && m.sortedAt ? `<dt>Trié le</dt><dd>${fmtDate(m.sortedAt, true)}${m.sortedBy ? '<div class="small muted">par ' + esc(m.sortedBy) + '</div>' : ''}</dd>` : ''}
+      ${m.md5 ? `<dt>Empreinte</dt><dd class="small muted" style="word-break:break-all">MD5 ${esc(m.md5)}</dd>` : ''}</dl>
+    <div style="margin-top:auto;padding:20px;border-top:1px solid var(--border);display:grid;gap:8px">
+      <button class="btn btn-outline btn-block" style="height:44px" onclick="downloadOne(lib.items.find(x=>x.id==='${m.id}'))">⬇ Télécharger l'original</button>
+      ${m.status === 'TO_SORT' ? `<button class="btn btn-success btn-block" style="height:44px" onclick="setStatus('${m.id}','SORTED')">✓ Marquer comme triée</button>` : `<button class="btn btn-outline btn-block" style="height:44px" onclick="setStatus('${m.id}','TO_SORT')">Remettre « À trier »</button>`}
+      <button class="btn btn-ghost btn-block" onclick="openDetail('${m.id}', true)">✎ Modifier les informations</button>
+      <button class="btn btn-danger-outline btn-block" style="margin-top:12px" onclick="confirmDelete('${m.id}')">🗑 Supprimer</button></div>`;
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="overlay" id="detail"><div class="detail">
+    <div class="viewer" id="viewer"><span class="spin" style="color:#fff"></span>
+      ${prev ? `<button class="nv" style="left:10px" onclick="openDetail('${prev.id}')" aria-label="Précédent">‹</button>` : ''}
+      ${next ? `<button class="nv" style="right:10px" onclick="openDetail('${next.id}');if(${idx}+5>=lib.items.length)loadMore()" aria-label="Suivant">›</button>` : ''}</div>
+    <aside class="info"><div class="between" style="padding:20px;border-bottom:1px solid var(--border);align-items:flex-start;flex-wrap:nowrap">
+      <div style="min-width:0"><b style="font-size:16px;word-break:break-all">${esc(m.originalFilename)}</b>
+      <div class="row" style="margin-top:8px"><span class="badge ${m.status === 'SORTED' ? 'badge-done' : 'badge-todo'}">${m.status === 'SORTED' ? 'Triée' : 'À trier'}</span>
+      <span class="small muted">${m.mediaType === 'VIDEO' ? 'Vidéo' : 'Photo'} · ${esc(m.extension.toUpperCase())} · ${fmtBytes(m.fileSize)}</span></div></div>
+      <button class="iconbtn" onclick="closeDetail()" aria-label="Fermer">✕</button></div>
+      ${editing ? editForm : infos}</aside></div></div>`);
+
+  document.onkeydown = e => { if (editing || e.target.tagName === 'INPUT') return; if (e.key === 'Escape') closeDetail(); if (e.key === 'ArrowLeft' && prev) openDetail(prev.id); if (e.key === 'ArrowRight' && next) openDetail(next.id); };
+
+  if (editing) {
+    const fill = () => { const c = cats.find(x => x.id === $('#ecat').value); $('#eact').innerHTML = (c ? c.activities.filter(a => a.active || a.id === m.activityId) : []).map(a => `<option value="${a.id}" ${a.id === m.activityId ? 'selected' : ''}>${esc(a.name)}</option>`).join(''); };
+    $('#ecat').onchange = fill; fill();
+    $('#editf').onsubmit = async e => {
+      e.preventDefault(); const fd = new FormData(e.target);
+      const d = new Date(fd.get('captureDate')); if (isNaN(d)) return toast('Date invalide.', 'error');
+      try {
+        const upd = await api('updateMedia', m.id, { photographer: fd.get('photographer'), captureDate: d.toISOString(), categoryId: fd.get('categoryId'), activityId: fd.get('activityId') });
+        Object.assign(m, upd); refreshCard(m.id); toast('Informations mises à jour.'); openDetail(m.id);
+      } catch (err) { toast(err.message, 'error'); }
+    };
+  }
+
+  // Visionneuse : aperçu (dérivé) pour les photos ; lecture de l'original pour les vidéos
+  const viewer = $('#viewer');
+  const setView = html => { const spin = viewer.querySelector('.spin'); if (spin) spin.outerHTML = html; else viewer.insertAdjacentHTML('afterbegin', html); };
+  if (m.mediaType === 'VIDEO') {
+    setView(`<div style="text-align:center;color:#fff">${thumbCache[m.id] ? `<img src="${thumbCache[m.id]}" style="max-height:40vh;display:block;margin:0 auto 14px;opacity:.6">` : ''}
+      <button class="btn btn-outline" id="playbtn">${I.play} Lire la vidéo (${fmtBytes(m.fileSize)})</button><div class="small" id="playprog" style="margin-top:8px;opacity:.7"></div></div>`);
+    $('#playbtn').onclick = async () => {
+      $('#playbtn').disabled = true;
+      try {
+        const blob = await fetchOriginal(m, p => { const el = $('#playprog'); if (el) el.textContent = 'Chargement ' + Math.round(p * 100) + ' %'; });
+        if (lib.openId !== m.id) return;
+        detailBlobUrl = URL.createObjectURL(blob);
+        viewer.querySelector('div').outerHTML = `<video controls autoplay playsinline src="${detailBlobUrl}"><p style="color:#fff">Format non lisible dans le navigateur : téléchargez l'original.</p></video>`;
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  } else {
+    api('getPreview', m.id).then(url => {
+      if (lib.openId !== m.id) return;
+      setView(url ? `<img src="${url}" alt="${esc(m.originalFilename)}">` : `<div style="color:#ddd;text-align:center;padding:20px">Aperçu indisponible pour ce format (${esc(m.extension.toUpperCase())}).<br>L'original est intact et téléchargeable.</div>`);
+    }).catch(e => setView('<div style="color:#ddd">' + esc(e.message) + '</div>'));
+  }
+}
+
+async function setStatus(id, status) {
+  try {
+    const m = lib.items.find(x => x.id === id);
+    const upd = await api('updateMedia', id, { status });
+    Object.assign(m, upd);
+    toast(status === 'SORTED' ? 'Média marqué comme trié.' : 'Média remis « À trier ».');
+    if (lib.filters.status && lib.filters.status !== status) {
+      const idx = lib.items.findIndex(x => x.id === id); const next = lib.items[idx + 1] || lib.items[idx - 1];
+      removeFromLibrary([id]);
+      next ? openDetail(next.id) : closeDetail();
+    } else { refreshCard(id); openDetail(id); }
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function confirmDelete(id) {
+  const m = lib.items.find(x => x.id === id);
+  confirmModal('Supprimer définitivement ce média ?', 'Cette action est irréversible. Le fichier original et ses données associées seront supprimés.<br><b style="word-break:break-all">' + esc(m.originalFilename) + '</b>', async () => {
+    const r = await api('deleteMedia', [id]);
+    if (r.failed.length && r.failed[0].error !== "Ce média n'existe plus.") throw new Error(r.failed[0].error);
+    const idx = lib.items.findIndex(x => x.id === id); const next = lib.items[idx + 1] || lib.items[idx - 1];
+    removeFromLibrary([id]);
+    next ? openDetail(next.id) : closeDetail();
+    toast('Le média a été supprimé définitivement.');
+  });
+}
+
+// ---------- confirmation
+function closeModal() { $('#modal-root').innerHTML = ''; }
+function confirmModal(title, html, onConfirm, label) {
+  $('#modal-root').innerHTML = `<div class="modal"><div class="box"><div class="icon">!</div><h2 style="font-size:18px">${esc(title)}</h2>
+    <p class="muted">${html}</p><div class="row" style="justify-content:flex-end;margin-top:18px">
+    <button class="btn btn-outline" id="mcancel">Annuler</button><button class="btn btn-danger" id="mok">${label || 'Supprimer définitivement'}</button></div></div></div>`;
+  $('#mcancel').onclick = closeModal;
+  $('#mok').onclick = async () => {
+    $('#mok').disabled = true; $('#mcancel').disabled = true; $('#mok').innerHTML = '<span class="spin"></span> ' + (label || 'Supprimer définitivement');
+    try { await onConfirm(); closeModal(); }
+    catch (e) { toast(e.message || 'Impossible de supprimer ce média. Veuillez réessayer.', 'error'); closeModal(); }
+  };
+}
+
+// ================================================================ CATÉGORIES & ACTIVITÉS
+async function renderCategories() {
+  const v = $('#view');
+  if (!v.querySelector('.cats')) v.innerHTML = '<h1>Catégories & activités</h1><p class="muted"><span class="spin"></span> Chargement…</p>';
+  let cats;
+  try { cats = await loadCatalog(true, true); } catch (e) { v.innerHTML = '<div class="alert">' + esc(e.message) + '</div>'; return; }
+  if (state.view !== 'categories') return;
+  const ib = (label, action, html, disabled, red) => `<button class="iconbtn" title="${label}" aria-label="${label}" ${disabled ? 'disabled' : ''} style="${red ? 'color:var(--red)' : ''}" onclick="${action}">${html}</button>`;
+  v.innerHTML = `<div class="between"><div><h1>Catégories & activités</h1>
+    <p class="muted" style="margin:0;max-width:680px">Les modifications s'appliquent immédiatement au formulaire d'importation. Les médias existants conservent le nom de catégorie et d'activité enregistré lors de leur importation. Un élément utilisé ne peut pas être supprimé : désactivez-le.</p></div>
+    <button class="btn btn-primary" onclick="promptCat()">+ Nouvelle catégorie</button></div>
+    <div class="cats">${cats.map((c, i) => `<section class="card cat" style="${c.active ? '' : 'background:#f9fafb'}">
+      <header><div style="flex:1;min-width:0"><b class="${c.active ? '' : 'strike'}">${esc(c.name)}</b><div class="small muted">${plural(c.mediaCount || 0, 'média')}${c.active ? '' : ' · désactivée'}</div></div>
+        ${ib('Monter', `moveCat(${i},-1)`, '↑', i === 0)}${ib('Descendre', `moveCat(${i},1)`, '↓', i === cats.length - 1)}
+        ${ib('Renommer', `promptCat('${c.id}')`, '✎')}${ib(c.active ? 'Désactiver' : 'Réactiver', `catalogOp('saveCategory',{id:'${c.id}',active:${!c.active}},'${c.active ? 'Catégorie désactivée.' : 'Catégorie réactivée.'}')`, c.active ? '◐' : '●')}
+        ${ib(c.mediaCount ? 'Utilisée : désactivez-la plutôt' : 'Supprimer', `delCat('${c.id}')`, '🗑', c.mediaCount, true)}</header>
+      <ul class="list">${c.activities.map((a, j) => `<li><span style="flex:1"><span class="${a.active ? '' : 'strike'}">${esc(a.name)}</span> <span class="small muted">${nf(a.mediaCount || 0)}${a.active ? '' : ' · désactivée'}</span></span>
+        ${ib('Monter', `moveAct('${c.id}',${j},-1)`, '↑', j === 0)}${ib('Descendre', `moveAct('${c.id}',${j},1)`, '↓', j === c.activities.length - 1)}
+        ${ib('Renommer', `promptAct('${c.id}','${a.id}')`, '✎')}${ib(a.active ? 'Désactiver' : 'Réactiver', `catalogOp('saveActivity',{id:'${a.id}',active:${!a.active}},'${a.active ? 'Activité désactivée.' : 'Activité réactivée.'}')`, a.active ? '◐' : '●')}
+        ${ib(a.mediaCount ? 'Utilisée : désactivez-la plutôt' : 'Supprimer', `delAct('${a.id}')`, '🗑', a.mediaCount, true)}</li>`).join('')}
+        <li><button class="btn btn-ghost btn-sm" onclick="promptAct('${c.id}')">+ Ajouter une activité</button></li></ul></section>`).join('')}</div>`;
+}
+async function catalogOp(fn, arg, msg) {
+  try { await api(fn, arg); catalogCache = { active: null, all: null }; toast(msg); renderCategories(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+function promptCat(id) {
+  const c = id && catalogCache.all.find(x => x.id === id);
+  const name = prompt(c ? 'Nouveau nom de la catégorie :' : 'Nom de la nouvelle catégorie :', c ? c.name : '');
+  if (name && name.trim()) catalogOp('saveCategory', c ? { id, name } : { name }, c ? 'Catégorie renommée.' : 'Catégorie « ' + name.trim() + ' » créée.');
+}
+function promptAct(catId, id) {
+  const c = catalogCache.all.find(x => x.id === catId); const a = id && c.activities.find(x => x.id === id);
+  const name = prompt(a ? "Nouveau nom de l'activité :" : 'Nom de la nouvelle activité (' + c.name + ') :', a ? a.name : '');
+  if (name && name.trim()) catalogOp('saveActivity', a ? { id, name } : { categoryId: catId, name }, a ? 'Activité renommée.' : 'Activité « ' + name.trim() + ' » ajoutée.');
+}
+function delCat(id) { const c = catalogCache.all.find(x => x.id === id); confirmModal('Supprimer la catégorie « ' + c.name + ' » ?', "La catégorie et ses activités seront supprimées. Aucun média n'y est rattaché.", async () => { await api('deleteCategory', id); catalogCache = { active: null, all: null }; toast('Catégorie supprimée.'); renderCategories(); }, 'Supprimer'); }
+function delAct(id) { confirmModal("Supprimer cette activité ?", "Aucun média n'utilise cette activité.", async () => { await api('deleteActivity', id); catalogCache = { active: null, all: null }; toast('Activité supprimée.'); renderCategories(); }, 'Supprimer'); }
+async function moveCat(i, d) { const ids = catalogCache.all.map(c => c.id); const [x] = ids.splice(i, 1); ids.splice(i + d, 0, x); await catalogOp('reorderCategories', ids, 'Ordre mis à jour.'); }
+async function moveAct(catId, j, d) { const c = catalogCache.all.find(x => x.id === catId); const ids = c.activities.map(a => a.id); const [x] = ids.splice(j, 1); ids.splice(j + d, 0, x); await catalogOp('reorderActivities', ids, 'Ordre mis à jour.'); }
+
+// ================================================================ PARAMÈTRES
+async function renderSettings() {
+  const v = $('#view');
+  v.innerHTML = '<h1>Paramètres</h1><p class="muted"><span class="spin"></span> Chargement…</p>';
+  let s; try { s = await api('getSettings'); } catch (e) { v.innerHTML = '<div class="alert">' + esc(e.message) + '</div>'; return; }
+  if (state.view !== 'settings') return;
+  v.innerHTML = `<div style="max-width:760px"><h1>Paramètres</h1><p class="muted">Configuration de la session et maintenance de la photothèque.</p>
+    <div class="card section" style="padding:20px"><h2>Nom affiché</h2>
+      <form id="namef" class="row section" style="flex-wrap:nowrap"><input class="input" id="dname" value="${esc(state.name)}" maxlength="60" required><button class="btn btn-primary">Enregistrer</button></form>
+      <p class="small muted">Le compte administrateur étant partagé, indiquez votre prénom pour que « trié par » identifie la bonne personne.</p></div>
+    <div class="card section" style="padding:20px"><h2>Stockage</h2><dl style="display:grid;grid-template-columns:auto 1fr;gap:8px 20px;margin:14px 0 0">
+      <dt class="muted">Fichiers</dt><dd style="margin:0"><a href="${esc(s.folderUrl)}" target="_blank">Dossier Google Drive</a></dd>
+      <dt class="muted">Base de données</dt><dd style="margin:0"><a href="${esc(s.spreadsheetUrl)}" target="_blank">Google Sheets</a></dd>
+      <dt class="muted">Taille max. par fichier</dt><dd style="margin:0">${nf(s.maxUploadMb)} Mo</dd>
+      <dt class="muted">Originaux</dt><dd style="margin:0">Conservés à l'identique (format, résolution, qualité, extension)</dd></dl></div>
+    <div class="card section" style="padding:20px"><h2>Maintenance</h2>
+      <p><b>${s.stalePending}</b> importation(s) interrompue(s) depuis plus de 24 h · <b>${s.deleting}</b> suppression(s) inachevée(s)</p>
+      <button class="btn btn-outline" id="cleanbtn" ${s.stalePending + s.deleting ? '' : 'disabled'}>Nettoyer</button></div>
+    <div class="card section" style="padding:20px"><h2>Sécurité</h2><ul class="muted" style="margin:10px 0 0;padding-left:18px;line-height:1.7">
+      <li>Les mots de passe sont stockés dans les Propriétés du script et ne sont jamais transmis au navigateur.</li>
+      <li>Modifier un mot de passe déconnecte automatiquement toutes les sessions correspondantes.</li>
+      <li>Toutes les actions d'administration sont vérifiées côté serveur.</li></ul></div></div>`;
+  $('#namef').onsubmit = async e => {
+    e.preventDefault();
+    try { const r = await api('setDisplayName', $('#dname').value); state.token = r.token; state.name = r.name; store.set('crf_token', r.token); toast('Nom affiché mis à jour.'); render(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+  $('#cleanbtn').onclick = async () => {
+    $('#cleanbtn').disabled = true;
+    try { const r = await api('cleanup'); toast(r.cleaned + ' élément(s) nettoyé(s)' + (r.failed ? ', ' + r.failed + ' en échec' : '') + '.', r.failed ? 'error' : ''); renderSettings(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+}
+
+// ================================================================ DÉMARRAGE
+(async function boot() {
+  if (!state.token) return render();
+  document.getElementById('app').innerHTML = '<div class="login"><span class="spin"></span></div>';
+  try {
+    const s = await call('getSession', state.token);
+    state.role = s.role; state.name = s.name;
+    state.view = s.role === 'ADMIN' ? 'dashboard' : 'import';
+  } catch (e) { state.token = null; store.set('crf_token', null); }
+  render();
+})();
+</script>
+</body>
+</html>
