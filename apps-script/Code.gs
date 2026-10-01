@@ -15,12 +15,12 @@
 const CONFIG = {
   TIMEZONE: 'Europe/Paris',
   // Taille des morceaux d'envoi : multiple de 256 Ko (exigence de l'API Drive).
-  CHUNK_SIZE: 5 * 1024 * 1024,
-  DOWNLOAD_CHUNK_SIZE: 6 * 1024 * 1024,
+  CHUNK_SIZE: 8 * 1024 * 1024,
+  DOWNLOAD_CHUNK_SIZE: 8 * 1024 * 1024,
   MAX_UPLOAD_BYTES: 4 * 1024 * 1024 * 1024,
   SESSION_HOURS: { USER: 168, ADMIN: 12 },
   PAGE_MAX: 120,
-  THUMB_SIZE: 480,
+  THUMB_SIZE: 360,
   PREVIEW_SIZE: 1600,
   // Mots de passe initiaux : copiés dans les Propriétés du script par setup().
   // Ensuite, modifiez-les UNIQUEMENT dans Paramètres du projet > Propriétés du script.
@@ -73,15 +73,16 @@ const VIDEO_EXT = {
  * s'exécute avec le compte du propriétaire, qui a déjà donné les autorisations.
  */
 function ensureInstalled_() {
-  const p = PropertiesService.getScriptProperties();
+  const p = props_();
   const ok = ['AUTH_SECRET', 'USER_PASSWORD', 'ADMIN_PASSWORD', 'SPREADSHEET_ID', 'ROOT_FOLDER_ID', 'ORIGINALS_FOLDER_ID', 'THUMBS_FOLDER_ID']
-    .every(function (k) { return p.getProperty(k); });
+    .every(function (k) { return p[k]; });
   if (ok) return;
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
     setup();
   } finally {
+    _props = null;
     lock.releaseLock();
   }
 }
@@ -179,8 +180,16 @@ function folderFromProp_(key) {
 
 let _ss = null;
 
+let _props = null;
+
+/** Propriétés du script lues une seule fois par appel (beaucoup plus rapide). */
+function props_() {
+  if (!_props) _props = PropertiesService.getScriptProperties().getProperties();
+  return _props;
+}
+
 function prop_(key) {
-  const value = PropertiesService.getScriptProperties().getProperty(key);
+  const value = props_()[key];
   if (!value) throw new Error("Application non installée : exécutez la fonction setup() dans l'éditeur Apps Script.");
   return value;
 }
@@ -283,7 +292,7 @@ function hash_(text) {
 }
 
 function passwordVersion_(role) {
-  const pw = String(PropertiesService.getScriptProperties().getProperty(role === 'ADMIN' ? 'ADMIN_PASSWORD' : 'USER_PASSWORD') || '').trim();
+  const pw = String(props_()[role === 'ADMIN' ? 'ADMIN_PASSWORD' : 'USER_PASSWORD'] || '').trim();
   return hash_(prop_('AUTH_SECRET') + ':' + role + ':' + pw).slice(0, 16);
 }
 
@@ -330,9 +339,9 @@ function login(password) {
 
   ensureInstalled_();
   const pw = String(password || '').trim();
-  const props = PropertiesService.getScriptProperties();
-  const isAdmin = hash_(pw) === hash_(String(props.getProperty('ADMIN_PASSWORD') || '\u0000').trim());
-  const isUser = hash_(pw) === hash_(String(props.getProperty('USER_PASSWORD') || '\u0000').trim());
+  const props = props_();
+  const isAdmin = hash_(pw) === hash_(String(props.ADMIN_PASSWORD || '\u0000').trim());
+  const isUser = hash_(pw) === hash_(String(props.USER_PASSWORD || '\u0000').trim());
   const role = isAdmin ? 'ADMIN' : isUser ? 'USER' : null;
 
   if (!role) {
@@ -574,11 +583,17 @@ function driveDelete_(fileId) {
   if (code !== 204 && code !== 200 && code !== 404) throw new Error('Drive : suppression impossible (' + code + ').');
 }
 
-function monthFolder_(isoDate) {
-  const parent = DriveApp.getFolderById(prop_('ORIGINALS_FOLDER_ID'));
+/** Identifiant du dossier mensuel des originaux (mis en cache : évite une recherche Drive par fichier). */
+function monthFolderId_(isoDate) {
   const name = Utilities.formatDate(new Date(isoDate), CONFIG.TIMEZONE, 'yyyy-MM');
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('mf_' + name);
+  if (cached) return cached;
+  const parent = DriveApp.getFolderById(prop_('ORIGINALS_FOLDER_ID'));
   const it = parent.getFoldersByName(name);
-  return it.hasNext() ? it.next() : parent.createFolder(name);
+  const id = (it.hasNext() ? it.next() : parent.createFolder(name)).getId();
+  cache.put('mf_' + name, id, 21600);
+  return id;
 }
 
 /** Session d'envoi « resumable » : les octets reçus sont écrits tels quels par Drive. */
@@ -665,7 +680,7 @@ function startUpload(token, meta) {
   const names = resolveCatActivity_(meta.categoryId, meta.activityId, true);
 
   const id = newId_('m');
-  const sessionUri = createResumableSession_(filename, format.mime, size, monthFolder_(capture.toISOString()).getId());
+  const sessionUri = createResumableSession_(filename, format.mime, size, monthFolderId_(capture.toISOString()));
   CacheService.getScriptCache().put('up_' + id, JSON.stringify({ uri: sessionUri, next: 0, size: size, fileId: null }), 21600);
 
   withLock_(function () {
@@ -734,7 +749,7 @@ function uploadDerivative(token, mediaId, kind, base64, mimeType) {
 }
 
 /** Étape 3 : vérification de l'original (taille exacte) puis publication (READY). */
-function finishUpload(token, mediaId) {
+function finishUpload(token, mediaId, derivs) {
   const s = auth_(token, 'USER');
   const cache = CacheService.getScriptCache();
   const st = JSON.parse(cache.get('up_' + mediaId) || 'null');
@@ -747,13 +762,22 @@ function finishUpload(token, mediaId) {
     throw new Error("L'importation a échoué pour ce fichier : taille reçue incorrecte. Veuillez réessayer.");
   }
 
-  const derivatives = {};
-  if (!media.thumbFileId) {
-    media.driveFileId = st.fileId;
-    try { ensureDerivatives_(media); } catch (e) { console.warn(e); }
-    derivatives.thumbFileId = media.thumbFileId;
-    derivatives.previewFileId = media.previewFileId;
+  // Miniature + aperçu générés par le navigateur, envoyés avec la finalisation.
+  const clientDerivs = {};
+  if (derivs && (derivs.mime === 'image/jpeg' || derivs.mime === 'image/webp')) {
+    const folder = DriveApp.getFolderById(prop_('THUMBS_FOLDER_ID'));
+    const ext = derivs.mime === 'image/webp' ? '.webp' : '.jpg';
+    ['thumb', 'preview'].forEach(function (kind) {
+      const data = derivs[kind];
+      if (!data || data.length > 8 * 1024 * 1024) return;
+      try {
+        clientDerivs[kind] = folder.createFile(Utilities.newBlob(Utilities.base64Decode(data), derivs.mime, mediaId + '_' + kind + ext)).getId();
+      } catch (e) { console.warn(e); }
+    });
   }
+  // Sans miniature du navigateur (HEIC sous Chrome, RAW, certaines vidéos), elle
+  // sera générée plus tard en arrière-plan : l'importation n'attend pas.
+  const derivatives = { thumbFileId: clientDerivs.thumb || '', previewFileId: clientDerivs.preview || '' };
 
   withLock_(function () {
     const m = findById_('Media', mediaId);
@@ -858,42 +882,78 @@ function listMediaIds(token, filters) {
   return filterMedia_(readAll_('Media'), filters).slice(0, 10000).map(function (m) { return m.id; });
 }
 
-/** Miniatures (data URL) — avec génération différée via Drive si absentes. */
+/**
+ * Miniatures (data URL). Rapide : une seule lecture de la base, cache, puis
+ * téléchargements Drive EN PARALLÈLE (UrlFetchApp.fetchAll).
+ */
 function getThumbnails(token, ids) {
   auth_(token, 'ADMIN');
+  const wanted = (ids || []).slice(0, 120);
+  const byId = {};
+  readAll_('Media').forEach(function (m) { byId[m.id] = m; });
   const cache = CacheService.getScriptCache();
   const out = {};
-  let generated = 0;
-  (ids || []).slice(0, 120).forEach(function (id) {
-    let m = findById_('Media', id);
-    if (!m || m.state !== 'READY') return;
-    if (!m.thumbFileId && (m.thumbAttempts || 0) < 5 && generated < 4) {
-      generated++;
-      try { ensureDerivatives_(m); } catch (e) { console.warn(e); }
-      const thumb = m.thumbFileId, preview = m.previewFileId;
-      withLock_(function () {
-        const row = findById_('Media', id);
-        if (!row) return;
-        row.thumbFileId = row.thumbFileId || thumb;
-        row.previewFileId = row.previewFileId || preview;
-        if (!row.thumbFileId) row.thumbAttempts = (row.thumbAttempts || 0) + 1;
-        update_('Media', row);
-        m = row;
-      });
-    }
-    if (!m.thumbFileId) { out[id] = null; return; }
-    const cached = cache.get('th_' + m.thumbFileId);
-    if (cached) { out[id] = cached; return; }
-    try {
-      const blob = DriveApp.getFileById(m.thumbFileId).getBlob();
-      const url = 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
-      if (url.length < 95000) cache.put('th_' + m.thumbFileId, url, 21600);
-      out[id] = url;
-    } catch (e) {
-      out[id] = null;
-    }
+  const keys = [];
+  wanted.forEach(function (id) {
+    const m = byId[id];
+    if (!m || m.state !== 'READY' || !m.thumbFileId) { out[id] = null; return; }
+    keys.push('th_' + m.thumbFileId);
   });
+  const cached = keys.length ? cache.getAll(keys) : {};
+  const toFetch = [];
+  wanted.forEach(function (id) {
+    const m = byId[id];
+    if (!m || !m.thumbFileId) return;
+    const hit = cached['th_' + m.thumbFileId];
+    if (hit) out[id] = hit; else toFetch.push(m);
+  });
+  if (toFetch.length) {
+    const headers = driveHeaders_();
+    const responses = UrlFetchApp.fetchAll(toFetch.map(function (m) {
+      return { url: 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(m.thumbFileId) + '?alt=media&supportsAllDrives=true', headers: headers, muteHttpExceptions: true };
+    }));
+    const toCache = {};
+    responses.forEach(function (res, i) {
+      const m = toFetch[i];
+      if (res.getResponseCode() !== 200) { out[m.id] = null; return; }
+      const type = (res.getHeaders()['Content-Type'] || 'image/jpeg').split(';')[0];
+      const url = 'data:' + type + ';base64,' + Utilities.base64Encode(res.getContent());
+      out[m.id] = url;
+      if (url.length < 95000) toCache['th_' + m.thumbFileId] = url;
+    });
+    if (Object.keys(toCache).length) cache.putAll(toCache, 21600);
+  }
   return out;
+}
+
+/**
+ * Génère, en arrière-plan, les miniatures manquantes (HEIC, RAW, vidéos…)
+ * à partir des aperçus calculés par Google Drive. Appelée séparément par
+ * l'interface pour ne jamais ralentir l'affichage de la grille.
+ */
+function generateMissingThumbnails(token, ids) {
+  auth_(token, 'ADMIN');
+  const byId = {};
+  readAll_('Media').forEach(function (m) { byId[m.id] = m; });
+  const done = {};
+  const started = Date.now();
+  (ids || []).slice(0, 10).forEach(function (id) {
+    const m = byId[id];
+    if (!m || m.state !== 'READY' || m.thumbFileId || (m.thumbAttempts || 0) >= 5) return;
+    if (Date.now() - started > 60000) return;
+    try { ensureDerivatives_(m); } catch (e) { console.warn(e); }
+    const thumb = m.thumbFileId, preview = m.previewFileId;
+    withLock_(function () {
+      const row = findById_('Media', id);
+      if (!row) return;
+      row.thumbFileId = row.thumbFileId || thumb;
+      row.previewFileId = row.previewFileId || preview;
+      if (!row.thumbFileId) row.thumbAttempts = (row.thumbAttempts || 0) + 1;
+      update_('Media', row);
+    });
+    if (thumb) done[id] = true;
+  });
+  return done;
 }
 
 /** Aperçu grand format pour la fiche détaillée (fichier dérivé, pas l'original). */

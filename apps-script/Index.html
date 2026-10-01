@@ -61,8 +61,8 @@ label.lbl{display:block;font-weight:600;font-size:13px;margin-bottom:6px}
 .ic{width:18px;height:18px;flex:none}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .between{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
-.grid3{display:grid;gap:16px;grid-template-columns:repeat(3,1fr)}
-@media (max-width:760px){.grid3{grid-template-columns:1fr}}
+.grid3{display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}
+@media (max-width:1100px){.grid3{grid-template-columns:1fr 1fr}}@media (max-width:600px){.grid3{grid-template-columns:1fr}}
 .section{margin-top:20px}
 /* Import */
 .drop{border:2px dashed #d1d5db;border-radius:var(--radius);background:#fff;padding:36px 16px;text-align:center}
@@ -166,6 +166,7 @@ const plural = (n, s, p) => nf(n) + ' ' + (n > 1 ? (p || s + 's') : s);
 function fmtBytes(b){ if(!b) return '0 o'; const u=['o','Ko','Mo','Go','To']; const e=Math.min(Math.floor(Math.log(b)/Math.log(1024)),4); return (b/Math.pow(1024,e)).toLocaleString('fr-FR',{maximumFractionDigits:e?1:0})+' '+u[e]; }
 function fmtDate(iso, time){ if(!iso) return '—'; return new Intl.DateTimeFormat('fr-FR', Object.assign({dateStyle:'medium', timeZone:TZ}, time?{timeStyle:'short'}:{})).format(new Date(iso)); }
 function fmtDur(s){ if(!s) return ''; s=Math.round(s); const m=Math.floor(s/60), r=s%60; return m+':'+String(r).padStart(2,'0'); }
+function dayValue(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
 function toLocalInput(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
 const CROSS = '<svg class="cross" viewBox="0 0 32 32" aria-hidden="true"><path fill="#E3000F" d="M11 2h10v9h9v10h-9v9H11v-9H2V11h9z"/></svg>';
 const I = {
@@ -297,7 +298,7 @@ async function loadCatalog(all, force) {
 }
 
 // ================================================================ IMPORTATION
-const imp = { items: [], rejected: [], running: false, photographer: store.get('crf_photographer') || '', categoryId: '', activityId: '', error: '' };
+const imp = { items: [], rejected: [], running: false, photographer: store.get('crf_photographer') || '', categoryId: '', activityId: '', date: '', dateAuto: false, error: '' };
 let impSeq = 0;
 
 async function renderImport() {
@@ -310,6 +311,8 @@ async function renderImport() {
         <div><label class="lbl" for="ph">Photographe *</label><input id="ph" class="input" placeholder="Prénom Nom" value="${esc(imp.photographer)}"></div>
         <div><label class="lbl" for="cat">Catégorie *</label><select id="cat" class="select"><option value="">Chargement…</option></select></div>
         <div><label class="lbl" for="act">Activité *</label><select id="act" class="select" disabled><option value="">Choisissez d'abord une catégorie</option></select></div>
+        <div><label class="lbl" for="pdate">Date de prise de vue *</label><input id="pdate" type="date" class="input" value="${esc(imp.date)}" max="${dayValue(new Date())}">
+          <div class="small muted" id="pdate-hint" style="margin-top:4px">${imp.dateAuto ? 'Préremplie depuis la photo (EXIF) — modifiable' : 'S\'applique à tous les fichiers sélectionnés'}</div></div>
       </div></div>
     <div id="drop" class="drop section">
       <div style="font-size:32px">🖼️</div>
@@ -321,6 +324,7 @@ async function renderImport() {
     <div id="rejected"></div><div id="queue"></div>`;
 
   $('#ph').oninput = e => { imp.photographer = e.target.value; };
+  $('#pdate').onchange = e => { imp.dateAuto = false; setGlobalDate(e.target.value); };
   $('#pick').onclick = () => $('#file').click();
   $('#file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
   const drop = $('#drop');
@@ -371,6 +375,17 @@ async function analyze(items) {
         const [info, deriv] = await Promise.all([extractDate(it.file, it.kind), makeDerivatives(it.file, it.kind).catch(() => null)]);
         it.captureDate = info.date; it.dateSource = info.source; it.deriv = deriv;
         if (deriv) it.preview = URL.createObjectURL(deriv.thumb);
+        if (!imp.date && (info.source === 'EXIF' || info.source === 'VIDEO_METADATA')) {
+          // Préremplit la date commune avec la date réelle de la photo
+          imp.date = dayValue(info.date); imp.dateAuto = true;
+          // Les fichiers déjà analysés sans date propre reçoivent cette date
+          imp.items.forEach(o => { if (o !== it && o.dateSource === 'FILE_DATE' && o.state !== 'done') applyDay(o, imp.date, true); });
+          const f = $('#pdate'); if (f) f.value = imp.date;
+          const h = $('#pdate-hint'); if (h) h.textContent = 'Préremplie depuis la photo (EXIF) — modifiable';
+        } else if (imp.date && (!imp.dateAuto || info.source === 'FILE_DATE')) {
+          // Date saisie par l'utilisateur (ou fichier sans date) : on applique la date commune
+          applyDay(it, imp.date, true);
+        }
       } catch (e) { it.captureDate = new Date(it.file.lastModified || Date.now()); it.dateSource = 'FILE_DATE'; }
       if (it.state === 'analyzing') it.state = 'ready';
       renderQueue();
@@ -402,7 +417,6 @@ function renderQueue() {
     <div class="between" style="padding:14px 16px;align-items:center">
       <div><b>${head}</b><div class="small muted">${fmtBytes(items.reduce((s, i) => s + i.file.size, 0))}${analyzing ? ' · analyse de ' + analyzing + ' fichier(s)…' : ''}</div></div>
       <div class="row">
-        ${!imp.running && pending.length ? `<input type="datetime-local" id="bulkdate" class="input" style="width:200px"><button class="btn btn-outline btn-sm" style="height:38px" onclick="applyBulkDate()">Appliquer à tous</button>` : ''}
         ${finished ? '<button class="btn btn-outline" onclick="imp.items=[];renderQueue()">Nouvelle importation</button>' : ''}
         ${!imp.running && failed.length && failed.length < pending.length ? `<button class="btn btn-outline" onclick="startImport(true)">↻ Réessayer les échecs (${failed.length})</button>` : ''}
         ${pending.length ? `<button class="btn btn-primary" onclick="startImport(false)" ${imp.running || analyzing ? 'disabled' : ''}>${imp.running ? '<span class="spin"></span>' : ''}${failed.length === pending.length ? '↻ Réessayer (' + failed.length + ')' : 'Importer ' + plural(pending.length, 'fichier')}</button>` : ''}
@@ -418,7 +432,7 @@ function itemRow(it) {
   if (it.state === 'done') right = '<span style="color:var(--green);font-weight:700">✓</span>';
   else if (it.state === 'uploading') right = `<span class="small muted">${Math.round(it.progress * 100)} %</span>`;
   else right = `<button class="iconbtn" ${imp.running ? 'disabled' : ''} onclick="removeItem('${it.key}')" aria-label="Retirer">✕</button>`;
-  const date = it.captureDate && it.state !== 'done' ? `<div><input type="datetime-local" class="input" style="width:200px" value="${toLocalInput(it.captureDate)}" ${it.state === 'uploading' ? 'disabled' : ''} onchange="setItemDate('${it.key}', this.value)">
+  const date = it.captureDate && it.state !== 'done' ? `<div><div class="small muted" style="margin-bottom:2px">Prise de vue</div><input type="datetime-local" class="input" style="width:200px" value="${toLocalInput(it.captureDate)}" ${it.state === 'uploading' ? 'disabled' : ''} onchange="setItemDate('${it.key}', this.value)">
       <div class="small ${it.dateSource === 'FILE_DATE' ? 'warn' : 'muted'}">${SRC_LABEL[it.dateSource] || ''}</div></div>` : '';
   return `<li><div class="fthumb">${thumb}</div>
     <div class="finfo"><div class="name" title="${esc(it.file.name)}">${esc(it.file.name)}</div>
@@ -428,9 +442,25 @@ function itemRow(it) {
     ${date}<div style="width:40px;text-align:right">${right}</div></li>`;
 }
 
+/** Date de prise de vue commune : appliquée à tous les fichiers (l'heure de chaque fichier est conservée). */
+function setGlobalDate(value) {
+  imp.date = value || '';
+  const hint = $('#pdate-hint');
+  if (hint) hint.textContent = imp.dateAuto ? 'Préremplie depuis la photo (EXIF) — modifiable' : "S'applique à tous les fichiers sélectionnés";
+  if (!imp.date) return renderQueue();
+  imp.items.forEach(i => { if (i.state === 'ready' || i.state === 'error' || i.state === 'analyzing') applyDay(i, imp.date, !imp.dateAuto); });
+  renderQueue();
+}
+function applyDay(it, day, manual) {
+  const [y, m, d] = day.split('-').map(Number);
+  const base = it.captureDate || new Date();
+  const hasTime = it.dateSource === 'EXIF' || it.dateSource === 'VIDEO_METADATA' || it.dateSource === 'MANUAL';
+  it.captureDate = new Date(y, m - 1, d, hasTime ? base.getHours() : 12, hasTime ? base.getMinutes() : 0);
+  if (manual) it.dateSource = 'MANUAL';
+}
+
 function removeItem(key) { const it = imp.items.find(i => i.key === key); if (it && it.preview) URL.revokeObjectURL(it.preview); imp.items = imp.items.filter(i => i.key !== key); renderQueue(); }
 function setItemDate(key, value) { const it = imp.items.find(i => i.key === key); const d = new Date(value); if (it && !isNaN(d)) { it.captureDate = d; it.dateSource = 'MANUAL'; renderQueue(); } }
-function applyBulkDate() { const d = new Date($('#bulkdate').value); if (isNaN(d)) return; imp.items.forEach(i => { if (i.state === 'ready' || i.state === 'error') { i.captureDate = d; i.dateSource = 'MANUAL'; } }); renderQueue(); }
 
 let renderTimer = null;
 function renderQueueSoon() { if (!renderTimer) renderTimer = setTimeout(() => { renderTimer = null; renderQueue(); }, 150); }
@@ -441,6 +471,7 @@ async function startImport(onlyFailed) {
   if (!imp.photographer) imp.error = 'Veuillez renseigner le nom du photographe.';
   else if (!imp.categoryId) imp.error = 'Veuillez choisir une catégorie.';
   else if (!imp.activityId) imp.error = 'Veuillez choisir une activité.';
+  else if (!($('#pdate') && $('#pdate').value || imp.date)) imp.error = 'Veuillez renseigner la date de prise de vue.';
   if (imp.error) return renderQueue();
   store.set('crf_photographer', imp.photographer);
 
@@ -458,7 +489,7 @@ async function startImport(onlyFailed) {
       renderQueue();
     }
   };
-  await Promise.all([worker(), worker()]);
+  await Promise.all([worker(), worker(), worker()]);
   imp.running = false;
   renderQueue();
   if (!ko) toast('Importation terminée ✓ — ' + plural(ok, 'fichier enregistré', 'fichiers enregistrés') + '.');
@@ -491,11 +522,10 @@ async function uploadItem(it) {
       it.progress = Math.min(0.97, offset / f.size);
       renderQueueSoon();
     }
-    if (it.deriv) {
-      await api('uploadDerivative', init.mediaId, 'thumb', await readB64(it.deriv.thumb), it.deriv.thumb.type).catch(() => null);
-      await api('uploadDerivative', init.mediaId, 'preview', await readB64(it.deriv.preview), it.deriv.preview.type).catch(() => null);
-    }
-    await api('finishUpload', init.mediaId);
+    const derivs = it.deriv && it.deriv.thumb.type === it.deriv.preview.type
+      ? { mime: it.deriv.thumb.type, thumb: await readB64(it.deriv.thumb), preview: await readB64(it.deriv.preview) }
+      : null;
+    await api('finishUpload', init.mediaId, derivs);
   } catch (e) {
     api('abortUpload', init.mediaId).catch(() => null);
     throw e;
@@ -503,7 +533,58 @@ async function uploadItem(it) {
 }
 
 // ---------- métadonnées (lecture seule : l'original n'est jamais modifié)
+/**
+ * Lecteur EXIF intégré (JPEG et formats TIFF/RAW) : lit DateTimeOriginal
+ * sans dépendre d'une bibliothèque externe. Lecture seule.
+ */
+async function readExifDateBuiltin(file) {
+  const buf = await file.slice(0, 256 * 1024).arrayBuffer();
+  const v = new DataView(buf);
+  let tiff = -1;
+  if (v.byteLength > 4 && v.getUint16(0) === 0xFFD8) {
+    let off = 2;
+    while (off + 4 < v.byteLength) {
+      if (v.getUint8(off) !== 0xFF) break;
+      const marker = v.getUint8(off + 1), len = v.getUint16(off + 2);
+      if (marker === 0xE1 && v.getUint32(off + 4) === 0x45786966) { tiff = off + 10; break; } // "Exif"
+      if (marker === 0xDA) break;
+      off += 2 + len;
+    }
+  } else if (v.byteLength > 8 && (v.getUint16(0) === 0x4949 || v.getUint16(0) === 0x4D4D)) {
+    tiff = 0; // DNG, CR2, NEF, ARW… (structure TIFF)
+  }
+  if (tiff < 0 || tiff + 8 > v.byteLength) return null;
+  const le = v.getUint16(tiff) === 0x4949;
+  const u16 = o => v.getUint16(o, le), u32 = o => v.getUint32(o, le);
+  const readAscii = (o, n) => { let t = ''; for (let i = 0; i < n && o + i < v.byteLength; i++) { const c = v.getUint8(o + i); if (!c) break; t += String.fromCharCode(c); } return t; };
+  function scan(ifd, tags) {
+    const found = {};
+    if (ifd + 2 > v.byteLength) return found;
+    const n = u16(ifd);
+    for (let i = 0; i < n; i++) {
+      const e = ifd + 2 + i * 12;
+      if (e + 12 > v.byteLength) break;
+      const tag = u16(e);
+      if (tags.indexOf(tag) < 0) continue;
+      const count = u32(e + 4);
+      found[tag] = tag === 0x8769 ? u32(e + 8) : readAscii(count > 4 ? tiff + u32(e + 8) : e + 8, count);
+    }
+    return found;
+  }
+  const ifd0 = scan(tiff + u32(tiff + 4), [0x8769, 0x0132]);
+  let text = null;
+  if (ifd0[0x8769]) { const ex = scan(tiff + ifd0[0x8769], [0x9003, 0x9004]); text = ex[0x9003] || ex[0x9004]; }
+  text = text || ifd0[0x0132];
+  const m = text && /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):?(\d{2})?/.exec(text);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  return isNaN(d) || d.getFullYear() < 1990 ? null : d;
+}
+
 async function extractDate(file, kind) {
+  if (kind === 'PHOTO') {
+    try { const d = await readExifDateBuiltin(file); if (d) return { date: d, source: 'EXIF' }; } catch (e) {}
+  }
   if (kind === 'PHOTO' && window.exifr) {
     try {
       const d = await exifr.parse(file, { pick: ['DateTimeOriginal', 'CreateDate', 'DateTimeDigitized'] });
@@ -556,7 +637,7 @@ async function renderVariants(src, w, h) {
     const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(src, 0, 0, c.width, c.height);
     return toBlob(c, q);
   };
-  return { thumb: await draw(480, 0.78), preview: await draw(1600, 0.85), width: w, height: h };
+  return { thumb: await draw(360, 0.75), preview: await draw(1600, 0.82), width: w, height: h };
 }
 async function makeDerivatives(file, kind) {
   const url = URL.createObjectURL(file);
@@ -671,13 +752,33 @@ async function renderDashboard() {
   loadThumbs(d.recent.map(m => m.id), '#recent');
 }
 
+function paintThumb(id, url, scope) {
+  document.querySelectorAll((scope || '') + ' [data-thumb="' + id + '"]').forEach(el => {
+    if (!url) return;
+    const keep = Array.from(el.querySelectorAll('.dot,.play,.vd')).map(x => x.outerHTML).join('');
+    el.innerHTML = '<img src="' + url + '" alt="" loading="lazy">' + keep;
+  });
+}
+/** Charge les miniatures par lots EN PARALLÈLE, puis fait générer les manquantes en arrière-plan. */
 async function loadThumbs(ids, scope) {
-  for (let i = 0; i < ids.length; i += 24) {
-    const map = await api('getThumbnails', ids.slice(i, i + 24)).catch(() => ({}));
-    Object.keys(map).forEach(id => {
-      thumbCache[id] = map[id];
-      document.querySelectorAll((scope || '') + ' [data-thumb="' + id + '"]').forEach(el => { if (map[id]) el.innerHTML = '<img src="' + map[id] + '" alt="" loading="lazy">' + (el.querySelector('.dot') ? el.querySelector('.dot').outerHTML : '') + Array.from(el.querySelectorAll('.play,.vd')).map(x => x.outerHTML).join(''); });
+  const batches = [];
+  for (let i = 0; i < ids.length; i += 30) batches.push(ids.slice(i, i + 30));
+  const missing = [];
+  await Promise.all(batches.map(async batch => {
+    const map = await api('getThumbnails', batch).catch(() => ({}));
+    batch.forEach(id => {
+      if (map[id]) { thumbCache[id] = map[id]; paintThumb(id, map[id], scope); }
+      else missing.push(id);
     });
+  }));
+  if (!missing.length) return;
+  for (let i = 0; i < missing.length; i += 10) {
+    const done = await api('generateMissingThumbnails', missing.slice(i, i + 10)).catch(() => ({}));
+    const ready = Object.keys(done || {});
+    if (ready.length) {
+      const map = await api('getThumbnails', ready).catch(() => ({}));
+      ready.forEach(id => { if (map[id]) { thumbCache[id] = map[id]; paintThumb(id, map[id], scope); } });
+    }
   }
 }
 const thumbCache = {};
@@ -774,10 +875,7 @@ async function loadMore() {
   } finally { if (req === lib.reqId) lib.loading = false; }
 }
 
-function setCardThumb(id, url) {
-  const el = document.querySelector('#grid [data-thumb="' + id + '"]');
-  if (el && url) el.innerHTML = '<img src="' + url + '" alt="" loading="lazy">' + Array.from(el.querySelectorAll('.play,.vd')).map(x => x.outerHTML).join('');
-}
+function setCardThumb(id, url) { paintThumb(id, url, '#grid'); }
 
 function cardHtml(m) {
   const sel = lib.selected.has(m.id);
