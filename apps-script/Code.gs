@@ -72,8 +72,6 @@ const VIDEO_EXT = {
  * Interface6.gs (texte encodé en base64, générés par build.mjs) : plus faciles
  * à copier-coller, et aucun fichier HTML à nommer.
  */
-const UI_PARTS = 6;
-
 /**
  * Installation automatique : si setup() n'a jamais été exécutée (ou a échoué),
  * elle est lancée à la première ouverture / connexion. L'application Web
@@ -102,13 +100,18 @@ function doGet() {
       '<br><br>Dans l\'éditeur Apps Script, choisissez la fonction <b>setup</b>, cliquez sur <b>Exécuter</b> et acceptez les autorisations.</p>'
     );
   }
+  // Appels directs (typeof ne provoque pas d'erreur si un fichier manque).
+  const parts = [
+    typeof interfacePart1 === 'function' ? interfacePart1() : null,
+    typeof interfacePart2 === 'function' ? interfacePart2() : null,
+    typeof interfacePart3 === 'function' ? interfacePart3() : null,
+    typeof interfacePart4 === 'function' ? interfacePart4() : null,
+    typeof interfacePart5 === 'function' ? interfacePart5() : null,
+    typeof interfacePart6 === 'function' ? interfacePart6() : null,
+  ];
   const missing = [];
-  let b64 = '';
-  for (let i = 1; i <= UI_PARTS; i++) {
-    const fn = globalThis['interfacePart' + i];
-    if (typeof fn !== 'function') missing.push('Interface' + i + '.gs');
-    else b64 += fn();
-  }
+  parts.forEach(function (p, i) { if (p === null) missing.push('Interface' + (i + 1) + '.gs'); });
+  const b64 = parts.join('');
   if (missing.length) {
     return HtmlService.createHtmlOutput(
       '<p style="font-family:sans-serif;padding:24px">Installation incomplète : fichier(s) manquant(s) ou incomplet(s) : <b>' +
