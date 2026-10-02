@@ -34,6 +34,8 @@ const SHEETS = {
     'thumbFileId', 'previewFileId', 'width', 'height', 'durationSec', 'captureDate', 'captureDateSource',
     'uploadedAt', 'photographer', 'categoryId', 'categoryName', 'activityId', 'activityName', 'status',
     'sortedAt', 'sortedBy', 'uploadedBy', 'state', 'thumbAttempts',
+    // Stockage : '' = Google Drive (médias historiques), 'b2' = Backblaze B2
+    'storage', 'storageKey', 'thumbKey', 'previewKey',
   ],
   Categories: ['id', 'name', 'description', 'active', 'displayOrder'],
   Activities: ['id', 'categoryId', 'name', 'active', 'displayOrder'],
@@ -645,6 +647,209 @@ function ensureDerivatives_(media) {
 }
 
 // =============================================================================
+//  Backblaze B2 — stockage des photos et vidéos (si configuré)
+//
+//  Propriétés du script à renseigner (Paramètres du projet > Propriétés du script) :
+//    B2_KEY_ID   : keyID de la clé d'application Backblaze
+//    B2_APP_KEY  : applicationKey (secrète : ne jamais la mettre dans le code)
+//    B2_BUCKET   : nom du bucket (facultatif si la clé est limitée à un bucket)
+//  Sans ces propriétés, la photothèque continue d'utiliser Google Drive.
+//
+//  Les fichiers sont rangés sous « gas/ » pour ne pas se mélanger avec ceux du site
+//  Vercel qui partage le même bucket. Le bucket reste PRIVÉ : le navigateur de
+//  l'administrateur reçoit des liens d'accès temporaires (12 h) et charge les images
+//  directement depuis Backblaze, sans passer par Google : affichage bien plus rapide.
+// =============================================================================
+
+const B2_PREFIX = 'gas/';
+const B2_CACHE_CONTROL = 'private, max-age=43200';
+
+function b2Configured_() {
+  const p = props_();
+  return Boolean(p.B2_KEY_ID && p.B2_APP_KEY);
+}
+
+function b2Raw_(auth, op, body) {
+  const res = UrlFetchApp.fetch(auth.apiUrl + '/b2api/v3/' + op, {
+    method: 'post', contentType: 'application/json', payload: JSON.stringify(body),
+    headers: { Authorization: auth.token }, muteHttpExceptions: true,
+  });
+  let json = {};
+  try { json = JSON.parse(res.getContentText()); } catch (e) {}
+  return { code: res.getResponseCode(), json: json };
+}
+
+/** Connexion à Backblaze (mise en cache 6 h). */
+function b2Auth_(force) {
+  const cache = CacheService.getScriptCache();
+  if (!force) {
+    const hit = cache.get('b2auth');
+    if (hit) return JSON.parse(hit);
+  }
+  const p = props_();
+  const res = UrlFetchApp.fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
+    headers: { Authorization: 'Basic ' + Utilities.base64Encode(String(p.B2_KEY_ID).trim() + ':' + String(p.B2_APP_KEY).trim()) },
+    muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) {
+    throw new Error('Backblaze : clé refusée. Vérifiez B2_KEY_ID et B2_APP_KEY dans les Propriétés du script.');
+  }
+  const d = JSON.parse(res.getContentText());
+  const api = d.apiInfo.storageApi;
+  const auth = { token: d.authorizationToken, apiUrl: api.apiUrl, downloadUrl: api.downloadUrl, accountId: d.accountId,
+    bucketId: api.bucketId, bucketName: api.bucketName };
+  if (!auth.bucketId) {
+    if (!p.B2_BUCKET) throw new Error('Backblaze : indiquez le nom du bucket (B2_BUCKET) dans les Propriétés du script.');
+    const r = b2Raw_(auth, 'b2_list_buckets', { accountId: d.accountId, bucketName: String(p.B2_BUCKET).trim() });
+    const b = r.json.buckets && r.json.buckets[0];
+    if (!b) throw new Error('Backblaze : bucket « ' + p.B2_BUCKET + ' » introuvable.');
+    auth.bucketId = b.bucketId;
+    auth.bucketName = b.bucketName;
+  }
+  cache.put('b2auth', JSON.stringify(auth), 21600);
+  return auth;
+}
+
+/** Appel de l'API Backblaze, avec reconnexion automatique si le jeton a expiré. */
+function b2Call_(op, body) {
+  let r = b2Raw_(b2Auth_(), op, body);
+  if (r.code === 401) r = b2Raw_(b2Auth_(true), op, body);
+  if (r.code !== 200) throw new Error('Backblaze (' + op + ') : ' + (r.json.message || r.json.code || r.code));
+  return r.json;
+}
+
+function b2EncodeName_(name) {
+  return encodeURIComponent(name).replace(/%2F/g, '/');
+}
+
+function sha1Hex_(bytes) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_1, bytes)
+    .map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+}
+
+/** Envoi d'un fichier en une fois (≤ CHUNK_SIZE). Octets envoyés tels quels. */
+function b2UploadSmall_(key, mime, bytes) {
+  let lastCode = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const u = b2Call_('b2_get_upload_url', { bucketId: b2Auth_().bucketId });
+    const res = UrlFetchApp.fetch(u.uploadUrl, {
+      method: 'post', payload: bytes, contentType: mime || 'b2/x-auto',
+      headers: { Authorization: u.authorizationToken, 'X-Bz-File-Name': b2EncodeName_(key), 'X-Bz-Content-Sha1': sha1Hex_(bytes) },
+      muteHttpExceptions: true,
+    });
+    lastCode = res.getResponseCode();
+    if (lastCode === 200) return JSON.parse(res.getContentText());
+    if (lastCode !== 401 && lastCode !== 408 && lastCode < 500) break;
+  }
+  throw new Error("L'importation a échoué pour ce fichier (Backblaze " + lastCode + ').');
+}
+
+/** Envoi d'une partie d'un gros fichier (≥ 5 Mo sauf la dernière). */
+function b2UploadPart_(st, bytes) {
+  const sha = sha1Hex_(bytes);
+  let lastCode = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!st.partUrl) {
+      const u = b2Call_('b2_get_upload_part_url', { fileId: st.fileId });
+      st.partUrl = u.uploadUrl;
+      st.partToken = u.authorizationToken;
+    }
+    const res = UrlFetchApp.fetch(st.partUrl, {
+      method: 'post', payload: bytes, contentType: 'application/octet-stream',
+      headers: { Authorization: st.partToken, 'X-Bz-Part-Number': String(st.shas.length + 1), 'X-Bz-Content-Sha1': sha },
+      muteHttpExceptions: true,
+    });
+    lastCode = res.getResponseCode();
+    if (lastCode === 200) { st.shas.push(sha); return; }
+    st.partUrl = null; // nouvelle URL d'envoi au prochain essai
+    if (lastCode !== 401 && lastCode !== 408 && lastCode < 500) break;
+  }
+  throw new Error("L'importation a échoué pour ce fichier (Backblaze " + lastCode + ').');
+}
+
+/** Suppression DÉFINITIVE : toutes les versions du fichier (B2 conserve les versions). */
+function b2DeleteAll_(key) {
+  if (!key) return;
+  const bucketId = b2Auth_().bucketId;
+  let start = key;
+  let startId = null;
+  for (let guard = 0; guard < 50; guard++) {
+    const body = { bucketId: bucketId, prefix: key, startFileName: start, maxFileCount: 100 };
+    if (startId) body.startFileId = startId;
+    const r = b2Call_('b2_list_file_versions', body);
+    (r.files || []).forEach(function (f) {
+      if (f.fileName !== key) return;
+      if (f.action === 'start') { try { b2Call_('b2_cancel_large_file', { fileId: f.fileId }); } catch (e) {} return; }
+      b2Call_('b2_delete_file_version', { fileName: f.fileName, fileId: f.fileId });
+    });
+    if (!r.nextFileName || r.nextFileName !== key) return;
+    start = r.nextFileName;
+    startId = r.nextFileId;
+  }
+}
+
+/** Jeton de lecture pour un préfixe (12 h, mis en cache 6 h → URL stables, images en cache). */
+function b2PrefixToken_(prefix) {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('b2dl_' + prefix);
+  if (hit) return hit;
+  const r = b2Call_('b2_get_download_authorization', {
+    bucketId: b2Auth_().bucketId, fileNamePrefix: prefix, validDurationInSeconds: 43200, b2CacheControl: B2_CACHE_CONTROL,
+  });
+  cache.put('b2dl_' + prefix, r.authorizationToken, 21600);
+  return r.authorizationToken;
+}
+
+/** Lien direct (temporaire) vers un fichier : le navigateur le charge depuis Backblaze. */
+function b2Url_(key) {
+  if (!key) return null;
+  const a = b2Auth_();
+  const prefix = key.split('/').slice(0, 2).join('/') + '/'; // ex. gas/thumbs/
+  return a.downloadUrl + '/file/' + encodeURIComponent(a.bucketName) + '/' + b2EncodeName_(key) +
+    '?Authorization=' + encodeURIComponent(b2PrefixToken_(prefix)) + '&b2CacheControl=' + encodeURIComponent(B2_CACHE_CONTROL);
+}
+
+/**
+ * Autorise l'application (domaine googleusercontent.com) à lire les fichiers depuis le
+ * navigateur (création des ZIP). Les règles CORS existantes (site Vercel) sont conservées.
+ */
+function ensureB2Cors_() {
+  if (props_().B2_CORS_OK === '1') return;
+  const a = b2Auth_();
+  const r = b2Call_('b2_list_buckets', { accountId: a.accountId, bucketId: a.bucketId });
+  const bucket = r.buckets && r.buckets[0];
+  if (!bucket) return;
+  const rules = (bucket.corsRules || []).filter(function (x) { return x.corsRuleName !== 'photothequeAppsScript'; });
+  rules.push({
+    corsRuleName: 'photothequeAppsScript',
+    allowedOrigins: ['https://*.googleusercontent.com'],
+    allowedOperations: ['b2_download_file_by_name'],
+    allowedHeaders: ['range'],
+    exposeHeaders: ['content-length'],
+    maxAgeSeconds: 3600,
+  });
+  b2Call_('b2_update_bucket', { accountId: a.accountId, bucketId: a.bucketId, corsRules: rules });
+  PropertiesService.getScriptProperties().setProperty('B2_CORS_OK', '1');
+}
+
+/** Vérification de la configuration Backblaze (à lancer depuis l'éditeur). */
+function testerBackblaze() {
+  if (!b2Configured_()) throw new Error('Renseignez B2_KEY_ID et B2_APP_KEY dans les Propriétés du script.');
+  const a = b2Auth_(true);
+  const key = B2_PREFIX + 'test/verification-' + Date.now() + '.txt';
+  const bytes = Utilities.newBlob('Photothèque : test Backblaze ' + new Date().toISOString()).getBytes();
+  const up = b2UploadSmall_(key, 'text/plain', bytes);
+  const res = UrlFetchApp.fetch(b2Url_(key), { muteHttpExceptions: true });
+  const ok = res.getResponseCode() === 200 && res.getContent().length === bytes.length;
+  b2DeleteAll_(key);
+  ensureB2Cors_();
+  Logger.log('Bucket : ' + a.bucketName + ' | envoi : ' + (up.contentLength === bytes.length ? 'OK' : 'ÉCHEC') +
+    ' | lecture : ' + (ok ? 'OK' : 'ÉCHEC') + ' | suppression : OK | CORS : OK');
+  if (!ok) throw new Error('La lecture du fichier de test a échoué.');
+  return 'Backblaze opérationnel ✅';
+}
+
+// =============================================================================
 //  Importation
 // =============================================================================
 
@@ -680,8 +885,23 @@ function startUpload(token, meta) {
   const names = resolveCatActivity_(meta.categoryId, meta.activityId, true);
 
   const id = newId_('m');
-  const sessionUri = createResumableSession_(filename, format.mime, size, monthFolderId_(capture.toISOString()));
-  CacheService.getScriptCache().put('up_' + id, JSON.stringify({ uri: sessionUri, next: 0, size: size, fileId: null }), 21600);
+  const useB2 = b2Configured_();
+  let state;
+  let storageKey = '';
+  if (useB2) {
+    // gas/originals/AAAA/MM/<id>/<nom d'origine> : le nom et l'extension d'origine sont conservés.
+    const month = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy/MM');
+    storageKey = B2_PREFIX + 'originals/' + month + '/' + id + '/' + filename.replace(/[\\\/]/g, '_');
+    if (size <= CONFIG.CHUNK_SIZE) {
+      state = { mode: 'b2small', key: storageKey, next: 0, size: size, fileId: null };
+    } else {
+      const lf = b2Call_('b2_start_large_file', { bucketId: b2Auth_().bucketId, fileName: storageKey, contentType: format.mime });
+      state = { mode: 'b2large', key: storageKey, next: 0, size: size, fileId: lf.fileId, shas: [], partUrl: null, partToken: null, done: false };
+    }
+  } else {
+    state = { mode: 'drive', uri: createResumableSession_(filename, format.mime, size, monthFolderId_(capture.toISOString())), next: 0, size: size, fileId: null };
+  }
+  CacheService.getScriptCache().put('up_' + id, JSON.stringify(state), 21600);
 
   withLock_(function () {
     append_('Media', {
@@ -692,6 +912,7 @@ function startUpload(token, meta) {
       uploadedAt: nowIso_(), photographer: photographer, categoryId: meta.categoryId, categoryName: names.categoryName,
       activityId: meta.activityId, activityName: names.activityName, status: 'TO_SORT', sortedAt: '', sortedBy: '',
       uploadedBy: s.name, state: 'PENDING', thumbAttempts: 0,
+      storage: useB2 ? 'b2' : '', storageKey: storageKey, thumbKey: '', previewKey: '',
     });
   });
   return { mediaId: id, chunkSize: CONFIG.CHUNK_SIZE };
@@ -708,6 +929,23 @@ function uploadChunk(token, mediaId, offset, base64) {
   if (!bytes.length) throw new Error('Morceau vide.');
   const end = st.next + bytes.length - 1;
   if (end >= st.size) throw new Error('Le fichier reçu dépasse la taille annoncée.');
+
+  if (st.mode === 'b2small') {
+    if (st.next !== 0 || bytes.length !== st.size) throw new Error('Envoi désynchronisé. Réessayez ce fichier.');
+    const up = b2UploadSmall_(st.key, null, bytes);
+    st.fileId = up.fileId;
+    st.next = st.size;
+    cache.put('up_' + mediaId, JSON.stringify(st), 21600);
+    return { next: st.next, done: true };
+  }
+  if (st.mode === 'b2large') {
+    if (bytes.length < 5 * 1024 * 1024 && end !== st.size - 1) throw new Error('Morceau trop petit.');
+    b2UploadPart_(st, bytes);
+    st.next = end + 1;
+    st.done = st.next === st.size;
+    cache.put('up_' + mediaId, JSON.stringify(st), 21600);
+    return { next: st.next, done: st.done };
+  }
 
   const res = UrlFetchApp.fetch(st.uri, {
     method: 'put',
@@ -753,6 +991,7 @@ function finishUpload(token, mediaId, derivs) {
   const s = auth_(token, 'USER');
   const cache = CacheService.getScriptCache();
   const st = JSON.parse(cache.get('up_' + mediaId) || 'null');
+  if (st && (st.mode === 'b2small' || st.mode === 'b2large')) return finishUploadB2_(s, mediaId, st, derivs);
   if (!st || !st.fileId) throw new Error("L'importation a échoué pour ce fichier : original non reçu.");
   const info = driveGet_(st.fileId, 'id,size,md5Checksum,imageMediaMetadata(width,height,rotation),videoMediaMetadata(width,height,durationMillis)');
   const media = findById_('Media', mediaId);
@@ -798,6 +1037,55 @@ function finishUpload(token, mediaId, derivs) {
   return { mediaId: mediaId };
 }
 
+/** Finalisation Backblaze : vérifie la taille exacte de l'original, enregistre les dérivés. */
+function finishUploadB2_(s, mediaId, st, derivs) {
+  const media = findById_('Media', mediaId);
+  if (!media) throw new Error('Importation introuvable.');
+  let fileId = st.fileId;
+  let length = 0;
+  if (st.mode === 'b2large') {
+    if (!st.done) throw new Error("L'importation a échoué pour ce fichier : original incomplet.");
+    const fin = b2Call_('b2_finish_large_file', { fileId: st.fileId, partSha1Array: st.shas });
+    fileId = fin.fileId;
+    length = Number(fin.contentLength);
+  } else {
+    if (!fileId) throw new Error("L'importation a échoué pour ce fichier : original non reçu.");
+    length = st.size;
+  }
+  if (length !== Number(media.fileSize)) {
+    b2DeleteAll_(st.key);
+    throw new Error("L'importation a échoué pour ce fichier : taille reçue incorrecte. Veuillez réessayer.");
+  }
+
+  // Miniature + aperçu (fichiers SÉPARÉS de l'original, pour l'affichage uniquement)
+  const keys = {};
+  if (derivs && (derivs.mime === 'image/jpeg' || derivs.mime === 'image/webp')) {
+    const ext = derivs.mime === 'image/webp' ? '.webp' : '.jpg';
+    const month = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy/MM');
+    [['thumb', 'thumbs'], ['preview', 'previews']].forEach(function (k) {
+      const data = derivs[k[0]];
+      if (!data || data.length > 8 * 1024 * 1024) return;
+      const key = B2_PREFIX + k[1] + '/' + month + '/' + mediaId + ext;
+      try { b2UploadSmall_(key, derivs.mime, Utilities.base64Decode(data)); keys[k[0]] = key; } catch (e) { console.warn(e); }
+    });
+  }
+
+  withLock_(function () {
+    const m = findById_('Media', mediaId);
+    m.storage = 'b2';
+    m.storageKey = st.key;
+    m.driveFileId = fileId; // identifiant Backblaze de l'original
+    m.thumbKey = keys.thumb || '';
+    m.previewKey = keys.preview || '';
+    m.state = 'READY';
+    m.uploadedAt = nowIso_();
+    update_('Media', m);
+    journalUpload_(s, m.categoryName + ' → ' + m.activityName);
+  });
+  CacheService.getScriptCache().remove('up_' + mediaId);
+  return { mediaId: mediaId };
+}
+
 /** Annulation d'une importation inachevée : nettoie fichiers et enregistrement. */
 function abortUpload(token, mediaId) {
   auth_(token, 'USER');
@@ -805,7 +1093,12 @@ function abortUpload(token, mediaId) {
   const st = JSON.parse(cache.get('up_' + mediaId) || 'null');
   const m = findById_('Media', mediaId);
   if (!m || m.state !== 'PENDING') return true;
-  [st && st.fileId, m.thumbFileId, m.previewFileId].forEach(function (id) { try { driveDelete_(id); } catch (e) {} });
+  if (m.storage === 'b2') {
+    if (st && st.mode === 'b2large' && st.fileId) { try { b2Call_('b2_cancel_large_file', { fileId: st.fileId }); } catch (e) {} }
+    [m.storageKey, m.thumbKey, m.previewKey].forEach(function (k) { try { b2DeleteAll_(k); } catch (e) {} });
+  } else {
+    [st && st.fileId, m.thumbFileId, m.previewFileId].forEach(function (id) { try { driveDelete_(id); } catch (e) {} });
+  }
   withLock_(function () {
     const row = findById_('Media', mediaId);
     if (row && row.state === 'PENDING') deleteRow_('Media', row);
@@ -825,8 +1118,31 @@ function dto_(m) {
     captureDate: m.captureDate, captureDateSource: m.captureDateSource, uploadedAt: m.uploadedAt,
     photographer: m.photographer, categoryId: m.categoryId, categoryName: m.categoryName,
     activityId: m.activityId, activityName: m.activityName, status: m.status, sortedAt: m.sortedAt,
-    sortedBy: m.sortedBy, uploadedBy: m.uploadedBy, hasThumb: Boolean(m.thumbFileId), hasPreview: Boolean(m.previewFileId),
+    sortedBy: m.sortedBy, uploadedBy: m.uploadedBy,
+    storage: m.storage === 'b2' ? 'b2' : 'drive',
+    hasThumb: Boolean(m.thumbFileId || m.thumbKey), hasPreview: Boolean(m.previewFileId || m.previewKey),
   };
+}
+
+/**
+ * DTO avec liens directs Backblaze (miniature, aperçu, original) pour l'administrateur.
+ * Les médias stockés dans Google Drive n'en ont pas : l'interface passe alors par le serveur.
+ */
+function dtoWithUrls_(m) {
+  const d = dto_(m);
+  if (m.storage === 'b2') {
+    d.thumbUrl = b2Url_(m.thumbKey);
+    d.previewUrl = b2Url_(m.previewKey);
+    d.originalUrl = b2Url_(m.storageKey);
+  }
+  return d;
+}
+
+/** Prépare les liens Backblaze (et la règle CORS) une seule fois par appel. */
+function b2Ready_() {
+  if (!b2Configured_()) return false;
+  try { ensureB2Cors_(); } catch (e) { console.warn('CORS Backblaze : ' + e); }
+  return true;
 }
 
 function filterMedia_(rows, f) {
@@ -873,7 +1189,8 @@ function listMedia(token, filters, offset, limit) {
   const rows = filterMedia_(readAll_('Media'), filters);
   const start = Math.max(0, Number(offset) || 0);
   const size = Math.min(Math.max(Number(limit) || 60, 1), CONFIG.PAGE_MAX);
-  return { items: rows.slice(start, start + size).map(dto_), total: rows.length };
+  b2Ready_();
+  return { items: rows.slice(start, start + size).map(dtoWithUrls_), total: rows.length };
 }
 
 /** « Tout sélectionner » : identifiants de tous les résultats filtrés. */
@@ -896,6 +1213,7 @@ function getThumbnails(token, ids) {
   const keys = [];
   wanted.forEach(function (id) {
     const m = byId[id];
+    if (m && m.state === 'READY' && m.storage === 'b2') { out[id] = m.thumbKey ? b2Url_(m.thumbKey) : null; return; }
     if (!m || m.state !== 'READY' || !m.thumbFileId) { out[id] = null; return; }
     keys.push('th_' + m.thumbFileId);
   });
@@ -903,7 +1221,7 @@ function getThumbnails(token, ids) {
   const toFetch = [];
   wanted.forEach(function (id) {
     const m = byId[id];
-    if (!m || !m.thumbFileId) return;
+    if (!m || !m.thumbFileId || m.storage === 'b2') return;
     const hit = cached['th_' + m.thumbFileId];
     if (hit) out[id] = hit; else toFetch.push(m);
   });
@@ -939,7 +1257,7 @@ function generateMissingThumbnails(token, ids) {
   const started = Date.now();
   (ids || []).slice(0, 10).forEach(function (id) {
     const m = byId[id];
-    if (!m || m.state !== 'READY' || m.thumbFileId || (m.thumbAttempts || 0) >= 5) return;
+    if (!m || m.state !== 'READY' || m.storage === 'b2' || m.thumbFileId || (m.thumbAttempts || 0) >= 5) return;
     if (Date.now() - started > 60000) return;
     try { ensureDerivatives_(m); } catch (e) { console.warn(e); }
     const thumb = m.thumbFileId, preview = m.previewFileId;
@@ -961,10 +1279,31 @@ function getPreview(token, id) {
   auth_(token, 'ADMIN');
   const m = findById_('Media', id);
   if (!m || m.state !== 'READY') throw new Error("Ce média n'existe plus.");
+  if (m.storage === 'b2') return b2Url_(m.previewKey || m.thumbKey);
   const fileId = m.previewFileId || m.thumbFileId;
   if (!fileId) return null;
   const blob = DriveApp.getFileById(fileId).getBlob();
   return 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
+}
+
+/**
+ * Lien de téléchargement direct de l'ORIGINAL (Backblaze), sous son nom d'origine.
+ * Valable 1 h, limité à ce seul fichier.
+ */
+function getDownloadUrl(token, id) {
+  auth_(token, 'ADMIN');
+  const m = findById_('Media', id);
+  if (!m || m.state !== 'READY') throw new Error("Ce média n'existe plus.");
+  if (m.storage !== 'b2') return null; // Google Drive : téléchargement par morceaux (downloadChunk)
+  const name = m.originalFilename;
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  const disposition = 'attachment; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(name);
+  const a = b2Auth_();
+  const r = b2Call_('b2_get_download_authorization', {
+    bucketId: a.bucketId, fileNamePrefix: m.storageKey, validDurationInSeconds: 3600, b2ContentDisposition: disposition,
+  });
+  return a.downloadUrl + '/file/' + encodeURIComponent(a.bucketName) + '/' + b2EncodeName_(m.storageKey) +
+    '?Authorization=' + encodeURIComponent(r.authorizationToken) + '&b2ContentDisposition=' + encodeURIComponent(disposition);
 }
 
 /**
@@ -1022,7 +1361,7 @@ function updateMedia(token, id, patch) {
     }
     update_('Media', m);
     if (edited) journal_(s, 'UPDATE', m.originalFilename, 1);
-    return dto_(m);
+    return dtoWithUrls_(m);
   });
 }
 
@@ -1065,9 +1404,15 @@ function deleteOne_(id) {
   if (!m) return { id: id, ok: false, error: "Ce média n'existe plus." };
 
   try {
-    driveDelete_(m.thumbFileId);
-    driveDelete_(m.previewFileId);
-    driveDelete_(m.driveFileId);
+    if (m.storage === 'b2') {
+      b2DeleteAll_(m.thumbKey);
+      b2DeleteAll_(m.previewKey);
+      b2DeleteAll_(m.storageKey);
+    } else {
+      driveDelete_(m.thumbFileId);
+      driveDelete_(m.previewFileId);
+      driveDelete_(m.driveFileId);
+    }
   } catch (e) {
     withLock_(function () {
       const row = findById_('Media', id);
@@ -1134,7 +1479,8 @@ function getDashboard(token) {
     return { id: id, name: catNames[id] || 'Sans catégorie', count: byCategory[id] };
   }).sort(function (a, b) { return b.count - a.count; });
 
-  const recent = ready.slice().sort(function (a, b) { return b.uploadedAt.localeCompare(a.uploadedAt); }).slice(0, 12).map(dto_);
+  b2Ready_();
+  const recent = ready.slice().sort(function (a, b) { return b.uploadedAt.localeCompare(a.uploadedAt); }).slice(0, 12).map(dtoWithUrls_);
   const toSort = ready.filter(function (m) { return m.status === 'TO_SORT'; })
     .sort(function (a, b) { return a.uploadedAt.localeCompare(b.uploadedAt); }).slice(0, 6).map(dto_);
 
@@ -1164,6 +1510,9 @@ function getSettings(token) {
     spreadsheetUrl: db_().getUrl(),
     folderUrl: DriveApp.getFolderById(prop_('ROOT_FOLDER_ID')).getUrl(),
     maxUploadMb: Math.round(CONFIG.MAX_UPLOAD_BYTES / 1048576),
+    storage: b2Configured_() ? 'Backblaze B2' + (function () { try { return ' — bucket ' + b2Auth_().bucketName; } catch (e) { return ' (erreur : ' + e.message + ')'; } })() : 'Google Drive',
+    driveMedia: rows.filter(function (m) { return m.state === 'READY' && m.storage !== 'b2'; }).length,
+    b2Media: rows.filter(function (m) { return m.state === 'READY' && m.storage === 'b2'; }).length,
   };
 }
 

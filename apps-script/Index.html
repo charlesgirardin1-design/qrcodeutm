@@ -660,6 +660,17 @@ async function makeDerivatives(file, kind) {
 
 // ================================================================ TÉLÉCHARGEMENTS (originaux)
 async function fetchOriginal(m, onProgress) {
+  if (m.originalUrl) {
+    // Backblaze : lecture directe, octets identiques à l'original
+    const res = await fetch(m.originalUrl);
+    if (!res.ok) throw new Error('Téléchargement impossible (' + res.status + ').');
+    const total = Number(res.headers.get('content-length')) || m.fileSize;
+    const reader = res.body.getReader(); const chunks = []; let got = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (onProgress) onProgress(got / total); }
+    const blob = new Blob(chunks, { type: m.mimeType });
+    if (blob.size !== m.fileSize) throw new Error('Téléchargement incomplet. Veuillez réessayer.');
+    return blob;
+  }
   const parts = []; let offset = 0;
   while (offset < m.fileSize) {
     const r = await api('downloadChunk', m.id, offset);
@@ -678,10 +689,23 @@ function saveBlob(blob, name) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
+function openUrl(url) {
+  // Réponse « attachment » : le navigateur télécharge le fichier sans quitter la page.
+  const a = document.createElement('a'); a.href = url; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+}
 async function downloadOne(m) {
-  toast('Téléchargement de « ' + m.originalFilename + ' »…', 'info');
-  try { saveBlob(await fetchOriginal(m), m.originalFilename); }
-  catch (e) { toast(e.message, 'error'); }
+  try {
+    if (m.storage === 'b2') {
+      const fresh = m._dl && Date.now() - (m._dlAt || 0) < 45 * 60000; // lien valable 1 h
+      const url = fresh ? m._dl : await api('getDownloadUrl', m.id);
+      m._dl = null; // on en redemandera un la prochaine fois
+      toast('Téléchargement de « ' + m.originalFilename + ' »…', 'info');
+      return openUrl(url);
+    }
+    toast('Téléchargement de « ' + m.originalFilename + ' »…', 'info');
+    saveBlob(await fetchOriginal(m), m.originalFilename);
+  } catch (e) { toast(e.message, 'error'); }
 }
 /** ZIP des ORIGINAUX, sans compression (méthode STORE), sans miniatures. */
 async function downloadZip(ids) {
@@ -749,7 +773,8 @@ async function renderDashboard() {
       <h2 class="section">Répartition par catégorie</h2>
       <div class="card section" style="padding:14px">${d.breakdown.length ? d.breakdown.map(b => `<div style="margin-bottom:10px;cursor:pointer" onclick="openLibrary({category:'${b.id}'})"><div class="between" style="align-items:center"><span>${esc(b.name)}</span><span class="muted">${nf(b.count)}</span></div><div class="bar"><div style="width:${b.count / maxCat * 100}%;background:#374151"></div></div></div>`).join('') : '<span class="muted">—</span>'}</div>
     </div></div>`;
-  loadThumbs(d.recent.map(m => m.id), '#recent');
+  d.recent.forEach(m => { if (m.thumbUrl) { thumbCache[m.id] = m.thumbUrl; paintThumb(m.id, m.thumbUrl, '#recent'); } });
+  loadThumbs(d.recent.filter(m => m.storage !== 'b2').map(m => m.id), '#recent');
 }
 
 function paintThumb(id, url, scope) {
@@ -866,7 +891,8 @@ async function loadMore() {
     $('#count').textContent = r.total ? plural(r.total, 'média') : 'Aucun média';
     if (!lib.items.length) grid.innerHTML = '<div class="card" style="grid-column:1/-1;padding:60px;text-align:center"><b>Aucun média ne correspond à ces critères</b><p class="muted">Modifiez la recherche ou les filtres.</p></div>';
     renderSelection();
-    const need = r.items.filter(m => thumbCache[m.id] === undefined).map(m => m.id);
+    r.items.forEach(m => { if (m.thumbUrl) thumbCache[m.id] = m.thumbUrl; });
+    const need = r.items.filter(m => m.storage !== 'b2' && thumbCache[m.id] === undefined).map(m => m.id);
     r.items.forEach(m => { if (thumbCache[m.id]) setCardThumb(m.id, thumbCache[m.id]); });
     if (need.length) loadThumbs(need, '#grid');
   } catch (e) {
@@ -1010,7 +1036,18 @@ function openDetail(id, editing) {
   // Visionneuse : aperçu (dérivé) pour les photos ; lecture de l'original pour les vidéos
   const viewer = $('#viewer');
   const setView = html => { const spin = viewer.querySelector('.spin'); if (spin) spin.outerHTML = html; else viewer.insertAdjacentHTML('afterbegin', html); };
-  if (m.mediaType === 'VIDEO') {
+  // Backblaze : lien de téléchargement préparé à l'avance (clic instantané)
+  if (m.storage === 'b2' && !m._dl) api('getDownloadUrl', m.id).then(u => { m._dl = u; m._dlAt = Date.now(); }).catch(() => {});
+  if (m.storage === 'b2' && m.mediaType === 'VIDEO') {
+    // Lecture directe depuis Backblaze : démarrage immédiat, avance rapide possible
+    setView(`<video controls playsinline preload="metadata" ${m.thumbUrl ? `poster="${m.thumbUrl}"` : ''} src="${m.originalUrl}"><p style="color:#fff">Format non lisible dans le navigateur : téléchargez l'original.</p></video>`);
+  } else if (m.storage === 'b2') {
+    const displayable = /^image\/(jpeg|png|webp|gif|avif|bmp)$/.test(m.mimeType);
+    const url = m.previewUrl || (displayable ? m.originalUrl : m.thumbUrl);
+    setView(url ? `<img src="${url}" alt="${esc(m.originalFilename)}">` : `<div style="color:#ddd;text-align:center;padding:20px">Aperçu indisponible pour ce format (${esc(m.extension.toUpperCase())}).<br>L'original est intact et téléchargeable.</div>`);
+    // Précharge les photos voisines pour une navigation ← → instantanée
+    [lib.items[idx + 1], lib.items[idx - 1]].forEach(n => { if (n && n.mediaType === 'PHOTO' && (n.previewUrl || n.thumbUrl)) { const i = new Image(); i.src = n.previewUrl || n.thumbUrl; } });
+  } else if (m.mediaType === 'VIDEO') {
     setView(`<div style="text-align:center;color:#fff">${thumbCache[m.id] ? `<img src="${thumbCache[m.id]}" style="max-height:40vh;display:block;margin:0 auto 14px;opacity:.6">` : ''}
       <button class="btn btn-outline" id="playbtn">${I.play} Lire la vidéo (${fmtBytes(m.fileSize)})</button><div class="small" id="playprog" style="margin-top:8px;opacity:.7"></div></div>`);
     $('#playbtn').onclick = async () => {
@@ -1122,7 +1159,8 @@ async function renderSettings() {
       <form id="namef" class="row section" style="flex-wrap:nowrap"><input class="input" id="dname" value="${esc(state.name)}" maxlength="60" required><button class="btn btn-primary">Enregistrer</button></form>
       <p class="small muted">Le compte administrateur étant partagé, indiquez votre prénom pour que « trié par » identifie la bonne personne.</p></div>
     <div class="card section" style="padding:20px"><h2>Stockage</h2><dl style="display:grid;grid-template-columns:auto 1fr;gap:8px 20px;margin:14px 0 0">
-      <dt class="muted">Fichiers</dt><dd style="margin:0"><a href="${esc(s.folderUrl)}" target="_blank">Dossier Google Drive</a></dd>
+      <dt class="muted">Stockage des médias</dt><dd style="margin:0"><b>${esc(s.storage)}</b><div class="small muted">${nf(s.b2Media)} sur Backblaze · ${nf(s.driveMedia)} sur Google Drive</div></dd>
+      <dt class="muted">Fichiers Drive</dt><dd style="margin:0"><a href="${esc(s.folderUrl)}" target="_blank">Dossier Google Drive</a></dd>
       <dt class="muted">Base de données</dt><dd style="margin:0"><a href="${esc(s.spreadsheetUrl)}" target="_blank">Google Sheets</a></dd>
       <dt class="muted">Taille max. par fichier</dt><dd style="margin:0">${nf(s.maxUploadMb)} Mo</dd>
       <dt class="muted">Originaux</dt><dd style="margin:0">Conservés à l'identique (format, résolution, qualité, extension)</dd></dl></div>
