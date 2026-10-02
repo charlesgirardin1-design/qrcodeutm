@@ -793,20 +793,25 @@ function fmtDec(n) { // unités décimales, comme les fournisseurs de stockage (
   if (n >= 1e9) return (n / 1e9).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' Go';
   return Math.round(n / 1e6).toLocaleString('fr-FR') + ' Mo';
 }
+function migrationBlock(st) {
+  if (!st.driveLeft) return '';
+  return `<div class="alert" style="margin-top:10px;background:#fffbeb;color:#92400e">
+      ${plural(st.driveLeft, 'média est encore', 'médias sont encore')} dans Google Drive.
+      <button class="btn btn-primary btn-sm" style="margin-left:8px" ${st.notConfigured ? 'disabled' : ''} onclick="runMigration(this)">Transférer vers Backblaze</button>
+      <div class="small" id="migr-status" style="margin-top:6px"></div></div>`;
+}
 function storageCard(st) {
   if (!st) return '<h2>Espace de stockage</h2><p class="muted">Indisponible.</p>';
   if (st.error) return '<h2>Espace de stockage</h2><div class="alert" style="margin-top:8px">' + esc(st.error) + '</div>';
   const head = `<div class="between" style="align-items:center"><h2>Espace de stockage</h2>
     <span class="small muted">${esc(st.provider)} · <a style="cursor:pointer;text-decoration:underline" onclick="refreshStorage()">Actualiser</a></span></div>`;
-  const app = `<div class="small muted" style="margin-top:4px">Photothèque : <b>${fmtDec(st.appUsed || 0)}</b> (${nf(st.appFiles || 0)} média${(st.appFiles || 0) > 1 ? 's' : ''})</div>`;
-  if (!st.quota) {
-    // Google Drive d'une organisation : pas de limite personnelle exploitable
-    return head + `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:8px">
-        <span style="font-size:26px;font-weight:700">${fmtDec(st.appUsed || 0)}</span><span class="muted">utilisés par la photothèque</span></div>
-      <div class="small muted">Stockage Google Drive fourni par ${st.pooled ? 'la Croix-Rouge (espace partagé de l\'organisation, pas de limite propre à la photothèque)' : 'Google'}${st.accountUsed != null ? ' · votre compte Google utilise ' + fmtDec(st.accountUsed) + ' au total' : ''}.</div>
-      ${st.b2Ready ? '' : '<div class="small muted" style="margin-top:6px">Backblaze n\'est pas configuré : les fichiers sont enregistrés dans Google Drive.</div>'}`;
+  if (st.notConfigured) {
+    return head + `<div class="alert" style="margin-top:10px"><b>Backblaze n'est pas configuré : les importations sont impossibles.</b><br>
+      Dans l'éditeur Apps Script : ⚙️ Paramètres du projet → Propriétés du script → ajoutez <b>B2_KEY_ID</b> et <b>B2_APP_KEY</b>,
+      puis exécutez la fonction <b>testerBackblaze</b>.</div>` + migrationBlock(st);
   }
-  const pct = Math.min(100, st.used / st.quota * 100);
+  const app = `<div class="small muted" style="margin-top:4px">Photothèque : <b>${fmtDec(st.appUsed || 0)}</b> (${nf(st.appFiles || 0)} média${(st.appFiles || 0) > 1 ? 's' : ''})</div>`;
+  const pct = st.quota ? Math.min(100, st.used / st.quota * 100) : 0;
   const remaining = Math.max(0, st.quota - st.used);
   const color = pct >= 95 ? 'var(--red)' : pct >= 80 ? '#d97706' : 'var(--green)';
   const alert = pct >= 95
@@ -817,7 +822,26 @@ function storageCard(st) {
     <div class="small muted">${fmtDec(st.used)} utilisés sur ${fmtDec(st.quota)} · ${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %${st.files != null ? ' · ' + nf(st.files) + ' fichiers dans le stockage' : ''}</div>
     ${app}
     <div class="bar" style="height:10px;border-radius:6px;margin-top:10px" role="progressbar" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="Espace utilisé">
-      <div style="width:${pct}%;background:${color}"></div></div>${alert}`;
+      <div style="width:${pct}%;background:${color}"></div></div>${alert}${migrationBlock(st)}`;
+}
+/** Transfert Google Drive → Backblaze, par lots, jusqu'à ce qu'il ne reste rien. */
+async function runMigration(btn) {
+  btn.disabled = true;
+  const status = () => document.getElementById('migr-status');
+  let total = 0;
+  try {
+    for (let round = 0; round < 50; round++) {
+      if (status()) status().innerHTML = '<span class="spin"></span> Transfert en cours… ' + total + ' média(s) transféré(s)';
+      const r = await api('migrateToB2');
+      total += r.migrated;
+      if (r.failed.length) toast('Échec : ' + r.failed[0], 'error');
+      if (!r.remaining || (!r.migrated && r.failed.length)) {
+        toast(r.remaining ? r.remaining + ' média(s) non transférés.' : 'Transfert terminé ✓ — ' + total + ' média(s) sur Backblaze, supprimés de Google Drive.', r.remaining ? 'error' : '');
+        break;
+      }
+    }
+  } catch (e) { toast(e.message, 'error'); }
+  if (state.view === 'dashboard') renderDashboard(); else if (state.view === 'settings') renderSettings();
 }
 async function refreshStorage() {
   const el = $('#storage-card'); if (!el) return;
@@ -1201,8 +1225,8 @@ async function renderSettings() {
       <p class="small muted">Le compte administrateur étant partagé, indiquez votre prénom pour que « trié par » identifie la bonne personne.</p></div>
     <div class="card section" style="padding:20px"><h2>Stockage</h2><dl style="display:grid;grid-template-columns:auto 1fr;gap:8px 20px;margin:14px 0 0">
       <dt class="muted">Stockage des médias</dt><dd style="margin:0"><b>${esc(s.storage)}</b><div class="small muted">${nf(s.b2Media)} sur Backblaze · ${nf(s.driveMedia)} sur Google Drive</div></dd>
-      <dt class="muted">Fichiers Drive</dt><dd style="margin:0"><a href="${esc(s.folderUrl)}" target="_blank">Dossier Google Drive</a></dd>
-      <dt class="muted">Base de données</dt><dd style="margin:0"><a href="${esc(s.spreadsheetUrl)}" target="_blank">Google Sheets</a></dd>
+      <dt class="muted">Base de données</dt><dd style="margin:0"><a href="${esc(s.spreadsheetUrl)}" target="_blank">Google Sheets</a> (fiches des médias, sans les fichiers)</dd>
+      ${s.driveMedia ? `<dt class="muted">Google Drive</dt><dd style="margin:0">${migrationBlock({ driveLeft: s.driveMedia, notConfigured: !s.b2Ready })}</dd>` : ''}
       <dt class="muted">Taille max. par fichier</dt><dd style="margin:0">${nf(s.maxUploadMb)} Mo</dd>
       <dt class="muted">Originaux</dt><dd style="margin:0">Conservés à l'identique (format, résolution, qualité, extension)</dd></dl></div>
     <div class="card section" style="padding:20px"><h2>Maintenance</h2>

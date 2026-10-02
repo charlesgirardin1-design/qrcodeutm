@@ -76,7 +76,7 @@ const VIDEO_EXT = {
  */
 function ensureInstalled_() {
   const p = props_();
-  const ok = ['AUTH_SECRET', 'USER_PASSWORD', 'ADMIN_PASSWORD', 'SPREADSHEET_ID', 'ROOT_FOLDER_ID', 'ORIGINALS_FOLDER_ID', 'THUMBS_FOLDER_ID']
+  const ok = ['AUTH_SECRET', 'USER_PASSWORD', 'ADMIN_PASSWORD', 'SPREADSHEET_ID']
     .every(function (k) { return p[k]; });
   if (ok) return;
   const lock = LockService.getScriptLock();
@@ -122,14 +122,12 @@ function setup() {
   if (!props.getProperty('USER_PASSWORD')) props.setProperty('USER_PASSWORD', CONFIG.DEFAULT_USER_PASSWORD);
   if (!props.getProperty('ADMIN_PASSWORD')) props.setProperty('ADMIN_PASSWORD', CONFIG.DEFAULT_ADMIN_PASSWORD);
 
-  // Dossiers Drive
+  // Dossier contenant uniquement la base de données (les photos et vidéos sont sur Backblaze).
   let root = folderFromProp_('ROOT_FOLDER_ID');
   if (!root) {
-    root = DriveApp.createFolder('Photothèque Croix-Rouge Boulogne-Billancourt');
+    root = DriveApp.createFolder('Photothèque Croix-Rouge Boulogne-Billancourt (base de données)');
     props.setProperty('ROOT_FOLDER_ID', root.getId());
   }
-  if (!folderFromProp_('ORIGINALS_FOLDER_ID')) props.setProperty('ORIGINALS_FOLDER_ID', root.createFolder('Originaux').getId());
-  if (!folderFromProp_('THUMBS_FOLDER_ID')) props.setProperty('THUMBS_FOLDER_ID', root.createFolder('Miniatures (affichage uniquement)').getId());
 
   // Base de données (Google Sheets)
   let ss = null;
@@ -167,7 +165,7 @@ function setup() {
 
   Logger.log('Installation terminée.');
   Logger.log('Base : ' + ss.getUrl());
-  Logger.log('Dossier Drive : ' + root.getUrl());
+  Logger.log('Photos et vidéos : Backblaze B2 (propriétés B2_KEY_ID et B2_APP_KEY).');
 }
 
 function folderFromProp_(key) {
@@ -886,18 +884,14 @@ function storageInfo_(force) {
     }
     info = { provider: 'Backblaze B2', used: used, quota: storageQuotaBytes_(), files: files };
   } else {
-    // Compte Google Workspace (ex. croix-rouge.fr) : la limite renvoyée est l'espace PARTAGÉ de
-    // toute l'organisation (des milliers de To) — inutilisable comme « espace restant ».
-    const limit = DriveApp.getStorageLimit();
-    const pooled = !limit || limit > 1e15; // > 1 Po : espace d'organisation, pas personnel
-    info = { provider: 'Google Drive', accountUsed: DriveApp.getStorageUsed(), quota: pooled ? 0 : limit,
-      used: DriveApp.getStorageUsed(), pooled: pooled, files: null };
+    info = { provider: 'Backblaze B2', notConfigured: true, used: 0, quota: 0, files: null };
   }
   // Espace occupé par la PHOTOTHÈQUE elle-même (originaux enregistrés).
   let app = 0, appFiles = 0;
   readAll_('Media').forEach(function (m) { if (m.state === 'READY') { app += Number(m.fileSize) || 0; appFiles++; } });
   info.appUsed = app;
   info.appFiles = appFiles;
+  info.driveLeft = readAll_('Media').filter(function (m) { return m.state === 'READY' && m.storage !== 'b2'; }).length;
   info.b2Ready = b2Configured_();
   info.measuredAt = nowIso_();
   cache.put('storageInfo', JSON.stringify(info), 600);
@@ -966,10 +960,13 @@ function startUpload(token, meta) {
     throw new Error('La date de prise de vue est invalide.');
   }
   const names = resolveCatActivity_(meta.categoryId, meta.activityId, true);
+  if (!b2Configured_()) {
+    throw new Error("Le stockage Backblaze n'est pas configuré : importation impossible. Prévenez l'administrateur.");
+  }
   assertStorageAvailable_(size);
 
   const id = newId_('m');
-  const useB2 = b2Configured_();
+  const useB2 = true; // photos et vidéos : Backblaze uniquement
   let state;
   let storageKey = '';
   if (useB2) {
@@ -1537,6 +1534,111 @@ function deleteMedia(token, ids) {
 }
 
 // =============================================================================
+//  Transfert Google Drive → Backblaze (médias importés avant Backblaze)
+//  Copie octet pour octet, vérifie la taille, puis SUPPRIME DÉFINITIVEMENT de Drive.
+//  Rejouable : s'arrête avant la limite de durée et indique ce qu'il reste.
+// =============================================================================
+
+function driveRead_(fileId, start, end) {
+  const headers = driveHeaders_();
+  if (start !== undefined) headers.Range = 'bytes=' + start + '-' + end;
+  const res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media&supportsAllDrives=true', {
+    headers: headers, muteHttpExceptions: true,
+  });
+  const code = res.getResponseCode();
+  if (code === 404) return null;
+  if (code !== 200 && code !== 206) throw new Error('Lecture Google Drive impossible (' + code + ').');
+  return { bytes: res.getContent(), type: (res.getHeaders()['Content-Type'] || '').split(';')[0] };
+}
+
+function migrateOneToB2_(m) {
+  const month = Utilities.formatDate(new Date(m.uploadedAt || Date.now()), CONFIG.TIMEZONE, 'yyyy/MM');
+  const key = B2_PREFIX + 'originals/' + month + '/' + m.id + '/' + m.originalFilename.replace(/[\\\/]/g, '_');
+  const size = Number(m.fileSize);
+  let fileId;
+  if (size <= CONFIG.CHUNK_SIZE) {
+    const f = driveRead_(m.driveFileId);
+    if (!f) throw new Error('Original introuvable dans Google Drive.');
+    if (f.bytes.length !== size) throw new Error('Taille lue incorrecte.');
+    const up = b2UploadSmall_(key, m.mimeType, f.bytes);
+    fileId = up.fileId;
+  } else {
+    const lf = b2Call_('b2_start_large_file', { bucketId: b2Auth_().bucketId, fileName: key, contentType: m.mimeType });
+    const st = { fileId: lf.fileId, shas: [], partUrl: null, partToken: null };
+    try {
+      for (let off = 0; off < size; off += CONFIG.CHUNK_SIZE) {
+        const end = Math.min(off + CONFIG.CHUNK_SIZE, size) - 1;
+        const part = driveRead_(m.driveFileId, off, end);
+        if (!part || part.bytes.length !== end - off + 1) throw new Error('Lecture partielle Google Drive incorrecte.');
+        b2UploadPart_(st, part.bytes);
+      }
+      const fin = b2Call_('b2_finish_large_file', { fileId: st.fileId, partSha1Array: st.shas });
+      if (Number(fin.contentLength) !== size) throw new Error('Taille copiée incorrecte.');
+      fileId = fin.fileId;
+    } catch (e) {
+      try { b2Call_('b2_cancel_large_file', { fileId: st.fileId }); } catch (x) {}
+      throw e;
+    }
+  }
+  // Dérivés d'affichage
+  const keys = {};
+  [['thumbFileId', 'thumbs', 'thumbKey'], ['previewFileId', 'previews', 'previewKey']].forEach(function (d) {
+    if (!m[d[0]]) return;
+    try {
+      const f = driveRead_(m[d[0]]);
+      if (!f) return;
+      const ext = f.type === 'image/webp' ? '.webp' : '.jpg';
+      const k = B2_PREFIX + d[1] + '/' + month + '/' + m.id + ext;
+      b2UploadSmall_(k, f.type || 'image/jpeg', f.bytes);
+      keys[d[2]] = k;
+    } catch (e) { console.warn(e); }
+  });
+  const driveIds = [m.driveFileId, m.thumbFileId, m.previewFileId];
+  withLock_(function () {
+    const row = findById_('Media', m.id);
+    if (!row) throw new Error('Média supprimé pendant le transfert.');
+    row.storage = 'b2';
+    row.storageKey = key;
+    row.driveFileId = fileId;
+    row.thumbKey = keys.thumbKey || '';
+    row.previewKey = keys.previewKey || '';
+    row.thumbFileId = '';
+    row.previewFileId = '';
+    update_('Media', row);
+  });
+  // Plus rien dans Google Drive
+  driveIds.forEach(function (id) { try { driveDelete_(id); } catch (e) { console.warn(e); } });
+}
+
+/** Transfère les médias encore dans Google Drive (ADMIN). À relancer tant que `remaining` > 0. */
+function migrateToB2(token) {
+  const s = auth_(token, 'ADMIN');
+  if (!b2Configured_()) throw new Error("Backblaze n'est pas configuré (B2_KEY_ID / B2_APP_KEY).");
+  const started = Date.now();
+  const todo = readAll_('Media').filter(function (m) { return m.state === 'READY' && m.storage !== 'b2' && m.driveFileId; });
+  let migrated = 0;
+  const failed = [];
+  for (let i = 0; i < todo.length; i++) {
+    if (Date.now() - started > 240000) break;
+    try { migrateOneToB2_(todo[i]); migrated++; }
+    catch (e) { failed.push(todo[i].originalFilename + ' : ' + e.message); }
+  }
+  if (migrated) {
+    journal_(s, 'MAINTENANCE', migrated + ' média(s) transféré(s) de Google Drive vers Backblaze', migrated);
+    CacheService.getScriptCache().remove('storageInfo');
+  }
+  const remaining = readAll_('Media').filter(function (m) { return m.state === 'READY' && m.storage !== 'b2'; }).length;
+  return { migrated: migrated, failed: failed, remaining: remaining };
+}
+
+/** Même transfert, à lancer depuis l'éditeur Apps Script (fonction « migrerVersBackblaze »). */
+function migrerVersBackblaze() {
+  const r = migrateToB2(signToken_({ r: 'ADMIN', n: 'Éditeur', exp: Date.now() + 3600000, pv: passwordVersion_('ADMIN') }));
+  Logger.log(r.migrated + ' transféré(s), ' + r.remaining + ' restant(s)' + (r.failed.length ? ' — échecs : ' + r.failed.join(' | ') : ''));
+  return r;
+}
+
+// =============================================================================
 //  Tableau de bord (ADMIN) — chiffres calculés depuis la base
 // =============================================================================
 
@@ -1597,9 +1699,10 @@ function getSettings(token) {
     stalePending: rows.filter(function (m) { return m.state === 'PENDING' && m.uploadedAt < dayAgo; }).length,
     deleting: rows.filter(function (m) { return m.state === 'DELETING'; }).length,
     spreadsheetUrl: db_().getUrl(),
-    folderUrl: DriveApp.getFolderById(prop_('ROOT_FOLDER_ID')).getUrl(),
+    folderUrl: (function () { try { return DriveApp.getFolderById(prop_('ROOT_FOLDER_ID')).getUrl(); } catch (e) { return ''; } })(),
     maxUploadMb: Math.round(CONFIG.MAX_UPLOAD_BYTES / 1048576),
-    storage: b2Configured_() ? 'Backblaze B2' + (function () { try { return ' — bucket ' + b2Auth_().bucketName; } catch (e) { return ' (erreur : ' + e.message + ')'; } })() : 'Google Drive',
+    storage: b2Configured_() ? 'Backblaze B2' + (function () { try { return ' — bucket ' + b2Auth_().bucketName; } catch (e) { return ' (erreur : ' + e.message + ')'; } })() : 'Backblaze NON CONFIGURÉ (importations impossibles)',
+    b2Ready: b2Configured_(),
     driveMedia: rows.filter(function (m) { return m.state === 'READY' && m.storage !== 'b2'; }).length,
     b2Media: rows.filter(function (m) { return m.state === 'READY' && m.storage === 'b2'; }).length,
   };
