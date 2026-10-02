@@ -850,6 +850,78 @@ function testerBackblaze() {
 }
 
 // =============================================================================
+//  Espace de stockage (tableau de bord administrateur + garde-fou à l'import)
+//
+//  Backblaze B2 : espace occupé par TOUT le bucket (toutes versions, site Vercel
+//  compris), comparé au quota STORAGE_QUOTA_GB des Propriétés du script
+//  (défaut 10 Go = offre gratuite Backblaze). Google Drive : quota du compte Google.
+// =============================================================================
+
+const STORAGE_FULL_RATIO = 0.95; // au-delà, les importations sont refusées
+
+function storageQuotaBytes_() {
+  const gb = Number(props_().STORAGE_QUOTA_GB || 10);
+  return Math.round((gb > 0 ? gb : 10) * 1e9);
+}
+
+/** Mesure l'espace occupé (mise en cache 10 min ; ajustée à chaque import/suppression). */
+function storageInfo_(force) {
+  const cache = CacheService.getScriptCache();
+  if (!force) {
+    const hit = cache.get('storageInfo');
+    if (hit) return JSON.parse(hit);
+  }
+  let info;
+  if (b2Configured_()) {
+    const a = b2Auth_();
+    let used = 0, files = 0, start = null, startId = null;
+    for (let guard = 0; guard < 200; guard++) {
+      const body = { bucketId: a.bucketId, maxFileCount: 10000 };
+      if (start) { body.startFileName = start; if (startId) body.startFileId = startId; }
+      const r = b2Call_('b2_list_file_versions', body);
+      (r.files || []).forEach(function (f) { used += Number(f.contentLength || 0); files++; });
+      if (!r.nextFileName) break;
+      start = r.nextFileName;
+      startId = r.nextFileId;
+    }
+    info = { provider: 'Backblaze B2', used: used, quota: storageQuotaBytes_(), files: files };
+  } else {
+    info = { provider: 'Google Drive', used: DriveApp.getStorageUsed(), quota: DriveApp.getStorageLimit(), files: null };
+  }
+  info.measuredAt = nowIso_();
+  cache.put('storageInfo', JSON.stringify(info), 600);
+  return info;
+}
+
+/** Ajuste la mesure en cache après un import (+) ou une suppression (−). */
+function adjustStorage_(delta) {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('storageInfo');
+  if (!hit) return;
+  const info = JSON.parse(hit);
+  info.used = Math.max(0, info.used + delta);
+  cache.put('storageInfo', JSON.stringify(info), 600);
+}
+
+/** Refuse un import qui ferait dépasser 95 % de l'espace disponible. */
+function assertStorageAvailable_(size) {
+  let info;
+  try { info = storageInfo_(); } catch (e) { console.warn('Mesure du stockage impossible : ' + e); return; }
+  if (!info.quota) return; // stockage Google illimité
+  const limit = Math.floor(info.quota * STORAGE_FULL_RATIO);
+  if (info.used + size > limit) {
+    throw new Error('Espace de stockage insuffisant : ' + Math.max(0, Math.round((limit - info.used) / 1e6)) +
+      ' Mo disponibles pour un fichier de ' + Math.round(size / 1e6) + ' Mo. Prévenez l\'administrateur.');
+  }
+}
+
+/** Espace de stockage (ADMIN). `refresh` force une nouvelle mesure. */
+function getStorage(token, refresh) {
+  auth_(token, 'ADMIN');
+  return storageInfo_(Boolean(refresh));
+}
+
+// =============================================================================
 //  Importation
 // =============================================================================
 
@@ -883,6 +955,7 @@ function startUpload(token, meta) {
     throw new Error('La date de prise de vue est invalide.');
   }
   const names = resolveCatActivity_(meta.categoryId, meta.activityId, true);
+  assertStorageAvailable_(size);
 
   const id = newId_('m');
   const useB2 = b2Configured_();
@@ -1032,6 +1105,7 @@ function finishUpload(token, mediaId, derivs) {
     m.uploadedAt = nowIso_();
     update_('Media', m);
     journalUpload_(s, m.categoryName + ' → ' + m.activityName);
+    adjustStorage_(Number(m.fileSize) || 0);
   });
   cache.remove('up_' + mediaId);
   return { mediaId: mediaId };
@@ -1081,6 +1155,7 @@ function finishUploadB2_(s, mediaId, st, derivs) {
     m.uploadedAt = nowIso_();
     update_('Media', m);
     journalUpload_(s, m.categoryName + ' → ' + m.activityName);
+    adjustStorage_(Number(m.fileSize) || 0);
   });
   CacheService.getScriptCache().remove('up_' + mediaId);
   return { mediaId: mediaId };
@@ -1428,6 +1503,7 @@ function deleteOne_(id) {
   } catch (e) {
     return { id: id, ok: false, error: "Fichiers supprimés mais l'enregistrement n'a pas pu être effacé. Relancez le nettoyage dans Paramètres." };
   }
+  adjustStorage_(-(Number(m.fileSize) || 0));
   return { id: id, ok: true, name: m.originalFilename };
 }
 
@@ -1492,7 +1568,9 @@ function getDashboard(token) {
     journal = jsh.getRange(from, 1, last - from + 1, SHEETS.Journal.length).getValues()
       .map(function (r, i) { return rowToObj_('Journal', r, from + i); }).reverse();
   }
-  return { name: s.name, stats: stats, breakdown: breakdown, recent: recent, toSort: toSort, journal: journal };
+  let storage = null;
+  try { storage = storageInfo_(); } catch (e) { storage = { error: e.message }; }
+  return { name: s.name, stats: stats, breakdown: breakdown, recent: recent, toSort: toSort, journal: journal, storage: storage };
 }
 
 // =============================================================================

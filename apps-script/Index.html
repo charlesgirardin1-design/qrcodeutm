@@ -762,6 +762,7 @@ async function renderDashboard() {
       ${card('Importés cette semaine', s.thisWeek, '', "openLibrary({sort:'upload_desc'})")}
       ${card('Importés ce mois', s.thisMonth, '', "openLibrary({sort:'upload_desc'})")}
     </div>
+    <div class="card section" style="padding:16px" id="storage-card">${storageCard(d.storage)}</div>
     <div class="dash"><div>
       <div class="between"><h2>Derniers médias importés</h2><a class="small muted" style="cursor:pointer" onclick="openLibrary({sort:'upload_desc'})">Tout voir →</a></div>
       <div class="recent section" id="recent">${d.recent.length ? d.recent.map(m => `<div data-thumb="${m.id}" title="${esc(m.originalFilename)}">${esc(m.extension.toUpperCase())}<span class="dot" style="background:${m.status === 'SORTED' ? 'var(--green)' : 'var(--red)'}"></span></div>`).join('') : '<p class="muted">Aucun média pour le moment.</p>'}</div>
@@ -785,6 +786,38 @@ function paintThumb(id, url, scope) {
   });
 }
 /** Charge les miniatures par lots EN PARALLÈLE, puis fait générer les manquantes en arrière-plan. */
+// ---------- Espace de stockage (tableau de bord)
+function fmtDec(n) { // unités décimales, comme les fournisseurs de stockage (1 Go = 10⁹ octets)
+  if (n == null) return '—';
+  if (n >= 1e12) return (n / 1e12).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' To';
+  if (n >= 1e9) return (n / 1e9).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' Go';
+  return Math.round(n / 1e6).toLocaleString('fr-FR') + ' Mo';
+}
+function storageCard(st) {
+  if (!st) return '<h2>Espace de stockage</h2><p class="muted">Indisponible.</p>';
+  if (st.error) return '<h2>Espace de stockage</h2><div class="alert" style="margin-top:8px">' + esc(st.error) + '</div>';
+  const head = `<div class="between" style="align-items:center"><h2>Espace de stockage</h2>
+    <span class="small muted">${esc(st.provider)} · <a style="cursor:pointer;text-decoration:underline" onclick="refreshStorage()">Actualiser</a></span></div>`;
+  if (!st.quota) return head + `<p style="margin:8px 0 0"><b>${fmtDec(st.used)}</b> utilisés · espace illimité</p>`;
+  const pct = Math.min(100, st.used / st.quota * 100);
+  const remaining = Math.max(0, st.quota - st.used);
+  const color = pct >= 95 ? 'var(--red)' : pct >= 80 ? '#d97706' : 'var(--green)';
+  const alert = pct >= 95
+    ? '<div class="alert" style="margin-top:10px">Espace plein : les nouvelles importations sont bloquées. Supprimez des médias ou augmentez l\'espace (STORAGE_QUOTA_GB).</div>'
+    : pct >= 80 ? '<div class="alert" style="margin-top:10px;background:#fffbeb;color:#92400e">Espace presque plein : les importations seront bloquées à 95 %.</div>' : '';
+  return head + `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:8px">
+      <span style="font-size:26px;font-weight:700;color:${color}">${fmtDec(remaining)}</span><span class="muted">disponibles</span></div>
+    <div class="small muted">${fmtDec(st.used)} utilisés sur ${fmtDec(st.quota)} · ${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %${st.files != null ? ' · ' + nf(st.files) + ' fichiers' : ''}</div>
+    <div class="bar" style="height:10px;border-radius:6px;margin-top:10px" role="progressbar" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="Espace utilisé">
+      <div style="width:${pct}%;background:${color}"></div></div>${alert}`;
+}
+async function refreshStorage() {
+  const el = $('#storage-card'); if (!el) return;
+  el.querySelector('h2').insertAdjacentHTML('afterend', ' <span class="spin" style="margin-left:8px"></span>');
+  try { el.innerHTML = storageCard(await api('getStorage', true)); }
+  catch (e) { el.innerHTML = storageCard({ error: e.message }); }
+}
+
 async function loadThumbs(ids, scope) {
   const batches = [];
   for (let i = 0; i < ids.length; i += 30) batches.push(ids.slice(i, i + 30));
