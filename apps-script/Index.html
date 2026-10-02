@@ -192,7 +192,30 @@ function call(fn, ...args) {
       })[fn](...args);
   });
 }
-const api = (fn, ...args) => call(fn, state.token, ...args);
+// Actions qui modifient les données : le cache d'affichage est vidé après chacune.
+const MUTATIONS = ['updateMedia', 'bulkStatus', 'deleteMedia', 'finishUpload', 'saveCategory', 'deleteCategory', 'reorderCategories',
+  'saveActivity', 'deleteActivity', 'reorderActivities', 'migrateToB2', 'cleanup', 'setDisplayName'];
+const api = (fn, ...args) => call(fn, state.token, ...args).then(r => { if (MUTATIONS.includes(fn)) swrClear(); return r; });
+
+/**
+ * Cache d'affichage : une page déjà vue s'affiche INSTANTANÉMENT avec les dernières données
+ * connues, puis se met à jour en arrière-plan. Gardé le temps de l'onglet (sessionStorage).
+ */
+const swrMem = {};
+function swrGet(key) {
+  if (swrMem[key]) return swrMem[key];
+  try { const v = sessionStorage.getItem('swr:' + key); if (v) return (swrMem[key] = JSON.parse(v)); } catch (e) {}
+  return null;
+}
+function swrSet(key, value) {
+  swrMem[key] = value;
+  try { sessionStorage.setItem('swr:' + key, JSON.stringify(value)); } catch (e) {}
+}
+function swrClear() {
+  Object.keys(swrMem).forEach(k => delete swrMem[k]);
+  try { Object.keys(sessionStorage).filter(k => k.startsWith('swr:')).forEach(k => sessionStorage.removeItem(k)); } catch (e) {}
+}
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function toast(message, kind) {
   const el = document.createElement('div');
@@ -209,6 +232,7 @@ const state = { token: store.get('crf_token'), role: null, name: '', view: 'logi
 function logout(expired) {
   if (state.token) store.set('crf_token', null);
   state.token = null; state.role = null; state.view = 'login';
+  swrClear(); catalogCache = { active: null, all: null };
   closeModal(); closeDetail();
   render();
   if (expired) toast('Session expirée. Veuillez vous reconnecter.', 'error');
@@ -292,8 +316,27 @@ function bindLogin() {
 let catalogCache = { active: null, all: null };
 async function loadCatalog(all, force) {
   const key = all ? 'all' : 'active';
-  if (!catalogCache[key] || force) catalogCache[key] = await api('getCatalog', Boolean(all));
+  if (!catalogCache[key] && !force) catalogCache[key] = swrGet('cat:' + key);
+  if (!catalogCache[key] || force) {
+    catalogCache[key] = await api('getCatalog', Boolean(all));
+    swrSet('cat:' + key, catalogCache[key]);
+  }
   return catalogCache[key];
+}
+
+/** Préchargement en arrière-plan des pages suivantes probables (photothèque, catégories). */
+let prefetched = false;
+function prefetchAdminPages() {
+  if (prefetched || state.role !== 'ADMIN') return;
+  prefetched = true;
+  setTimeout(() => {
+    loadCatalog(true).catch(() => {});
+    const key = 'lib:' + JSON.stringify(EMPTY_FILTERS);
+    if (!swrGet(key)) api('listMedia', Object.assign({}, EMPTY_FILTERS), 0, PAGE).then(r => {
+      swrSet(key, r);
+      r.items.forEach(m => { if (m.thumbUrl) { thumbCache[m.id] = m.thumbUrl; const i = new Image(); i.src = m.thumbUrl; } });
+    }).catch(() => {});
+  }, 300);
 }
 
 // ================================================================ IMPORTATION
@@ -331,13 +374,15 @@ async function renderImport() {
   drop.ondragleave = () => drop.classList.remove('drag');
   drop.ondrop = e => { e.preventDefault(); drop.classList.remove('drag'); if (!imp.running) addFiles(e.dataTransfer.files); };
 
-  try {
-    const cats = await loadCatalog(false, true);
+  // Catégories : affichage immédiat depuis le cache, puis actualisation (sans perdre le choix en cours)
+  const fill = cats => {
     const sel = $('#cat'); if (!sel) return;
+    if (imp.categoryId && !cats.some(c => c.id === imp.categoryId)) { imp.categoryId = ''; imp.activityId = ''; }
     sel.innerHTML = '<option value="">Choisir une catégorie</option>' + cats.map(c => `<option value="${c.id}" ${c.id===imp.categoryId?'selected':''}>${esc(c.name)}</option>`).join('');
     const fillActs = () => {
       const c = cats.find(x => x.id === imp.categoryId);
       const a = $('#act');
+      if (c && imp.activityId && !c.activities.some(x => x.id === imp.activityId)) imp.activityId = '';
       a.disabled = !c;
       a.innerHTML = c ? '<option value="">Choisir une activité</option>' + c.activities.map(x => `<option value="${x.id}" ${x.id===imp.activityId?'selected':''}>${esc(x.name)}</option>`).join('')
                       : '<option value="">Choisissez d\'abord une catégorie</option>';
@@ -345,7 +390,14 @@ async function renderImport() {
     sel.onchange = () => { imp.categoryId = sel.value; imp.activityId = ''; fillActs(); };
     $('#act').onchange = e => { imp.activityId = e.target.value; };
     fillActs();
-  } catch (err) { toast('Impossible de charger les catégories : ' + err.message, 'error'); }
+  };
+  const cachedCats = catalogCache.active || swrGet('cat:active') ||
+    (catalogCache.all && catalogCache.all.filter(c => c.active).map(c => Object.assign({}, c, { activities: c.activities.filter(a => a.active) })));
+  if (cachedCats) fill(cachedCats);
+  try {
+    const cats = await loadCatalog(false, true);
+    if (!cachedCats || !same(cats, cachedCats)) fill(cats);
+  } catch (err) { if (!cachedCats) toast('Impossible de charger les catégories : ' + err.message, 'error'); }
   renderQueue();
 }
 
@@ -759,10 +811,20 @@ const COUNTED = ['UPLOAD', 'SORT', 'UNSORT', 'DELETE'];
 
 async function renderDashboard() {
   const v = $('#view');
-  v.innerHTML = '<h1>Tableau de bord</h1><p class="muted"><span class="spin"></span> Chargement…</p>';
+  const cached = swrGet('dash');
+  if (cached) drawDashboard(cached);
+  else v.innerHTML = '<h1>Tableau de bord</h1><p class="muted"><span class="spin"></span> Chargement…</p>';
   let d;
-  try { d = await api('getDashboard'); } catch (e) { v.innerHTML = '<h1>Tableau de bord</h1><div class="alert">' + esc(e.message) + '</div>'; return; }
-  if (state.view !== 'dashboard') return;
+  try { d = await api('getDashboard'); }
+  catch (e) { if (!cached) v.innerHTML = '<h1>Tableau de bord</h1><div class="alert">' + esc(e.message) + '</div>'; else toast(e.message, 'error'); return; }
+  swrSet('dash', d);
+  if (state.view === 'dashboard' && !same(d, cached)) drawDashboard(d);
+  prefetchAdminPages();
+}
+
+function drawDashboard(d) {
+  const v = $('#view');
+  if (state.view !== 'dashboard' || !v) return;
   const s = d.stats;
   const card = (label, val, color, action) => `<div class="card stat" onclick="${action}"><div class="small muted">${label}</div><div class="v" style="${color ? 'color:' + color : ''}">${nf(val)}</div></div>`;
   const maxCat = Math.max(1, ...d.breakdown.map(b => b.count));
@@ -961,9 +1023,31 @@ async function loadMore() {
   const req = lib.reqId;
   const grid = $('#grid');
   grid.insertAdjacentHTML('beforeend', Array(lib.items.length ? 6 : 12).fill('<div class="skel"></div>').join(''));
+  const firstPage = !lib.items.length;
+  const offset = lib.items.length;
+  const key = 'lib:' + JSON.stringify(lib.filters);
+  const cached = firstPage ? swrGet(key) : null;
+  if (cached) applyPage(cached); // affichage immédiat, actualisé juste après
   try {
-    const r = await api('listMedia', lib.filters, lib.items.length, PAGE);
+    const r = await api('listMedia', lib.filters, offset, PAGE);
     if (req !== lib.reqId) return;
+    if (firstPage) swrSet(key, r);
+    if (cached) {
+      if (!same(r, cached)) { lib.items = []; lib.selected = new Set(); grid.innerHTML = ''; applyPage(r); }
+      return;
+    }
+    applyPage(r);
+  } catch (e) {
+    grid.querySelectorAll('.skel').forEach(s => s.remove());
+    toast(e.message, 'error');
+  } finally { if (req === lib.reqId) lib.loading = false; }
+}
+
+/** Affiche une page de résultats dans la grille. */
+function applyPage(r) {
+  const grid = $('#grid');
+  if (!grid) return;
+  {
     grid.querySelectorAll('.skel').forEach(s => s.remove());
     lib.total = r.total;
     lib.items = lib.items.concat(r.items);
@@ -976,10 +1060,7 @@ async function loadMore() {
     const need = r.items.filter(m => m.storage !== 'b2' && thumbCache[m.id] === undefined).map(m => m.id);
     r.items.forEach(m => { if (thumbCache[m.id]) setCardThumb(m.id, thumbCache[m.id]); });
     if (need.length) loadThumbs(need, '#grid');
-  } catch (e) {
-    grid.querySelectorAll('.skel').forEach(s => s.remove());
-    toast(e.message, 'error');
-  } finally { if (req === lib.reqId) lib.loading = false; }
+  }
 }
 
 function setCardThumb(id, url) { paintThumb(id, url, '#grid'); }

@@ -223,6 +223,14 @@ function rowToObj_(name, values, rowIndex) {
   return o;
 }
 
+// Tableau de bord préparé : gardé 2 min, effacé dès qu'une donnée change.
+let _dashInvalidated = false;
+function invalidateDashboard_() {
+  if (_dashInvalidated) return;
+  _dashInvalidated = true;
+  try { CacheService.getScriptCache().remove('dashboard'); } catch (e) {}
+}
+
 // Lecture mémorisée pendant UN appel serveur (chaque appel repart de zéro) :
 // évite de relire plusieurs fois toute la feuille au cours d'une même action.
 let _rowsMemo = {};
@@ -260,16 +268,19 @@ function findById_(name, id) {
 
 function append_(name, obj) {
   delete _rowsMemo[name];
+  invalidateDashboard_();
   sheet_(name).appendRow(toRow_(name, obj));
 }
 
 function update_(name, obj) {
   delete _rowsMemo[name];
+  invalidateDashboard_();
   sheet_(name).getRange(obj._row, 1, 1, SHEETS[name].length).setValues([toRow_(name, obj)]);
 }
 
 function deleteRow_(name, obj) {
   delete _rowsMemo[name];
+  invalidateDashboard_();
   sheet_(name).deleteRow(obj._row);
 }
 
@@ -1675,6 +1686,16 @@ function migrerVersBackblaze() {
 
 function getDashboard(token) {
   const s = auth_(token, 'ADMIN');
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('dashboard');
+  if (hit) { const d = JSON.parse(hit); d.name = s.name; return d; }
+  const d = computeDashboard_(s);
+  const json = JSON.stringify(d);
+  if (json.length < 95000) cache.put('dashboard', json, 120);
+  return d;
+}
+
+function computeDashboard_(s) {
   const ready = readAll_('Media').filter(function (m) { return m.state === 'READY'; });
   const now = new Date();
   const dow = Number(Utilities.formatDate(now, CONFIG.TIMEZONE, 'u')); // 1 = lundi
