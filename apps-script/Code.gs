@@ -886,8 +886,19 @@ function storageInfo_(force) {
     }
     info = { provider: 'Backblaze B2', used: used, quota: storageQuotaBytes_(), files: files };
   } else {
-    info = { provider: 'Google Drive', used: DriveApp.getStorageUsed(), quota: DriveApp.getStorageLimit(), files: null };
+    // Compte Google Workspace (ex. croix-rouge.fr) : la limite renvoyée est l'espace PARTAGÉ de
+    // toute l'organisation (des milliers de To) — inutilisable comme « espace restant ».
+    const limit = DriveApp.getStorageLimit();
+    const pooled = !limit || limit > 1e15; // > 1 Po : espace d'organisation, pas personnel
+    info = { provider: 'Google Drive', accountUsed: DriveApp.getStorageUsed(), quota: pooled ? 0 : limit,
+      used: DriveApp.getStorageUsed(), pooled: pooled, files: null };
   }
+  // Espace occupé par la PHOTOTHÈQUE elle-même (originaux enregistrés).
+  let app = 0, appFiles = 0;
+  readAll_('Media').forEach(function (m) { if (m.state === 'READY') { app += Number(m.fileSize) || 0; appFiles++; } });
+  info.appUsed = app;
+  info.appFiles = appFiles;
+  info.b2Ready = b2Configured_();
   info.measuredAt = nowIso_();
   cache.put('storageInfo', JSON.stringify(info), 600);
   return info;

@@ -798,7 +798,14 @@ function storageCard(st) {
   if (st.error) return '<h2>Espace de stockage</h2><div class="alert" style="margin-top:8px">' + esc(st.error) + '</div>';
   const head = `<div class="between" style="align-items:center"><h2>Espace de stockage</h2>
     <span class="small muted">${esc(st.provider)} · <a style="cursor:pointer;text-decoration:underline" onclick="refreshStorage()">Actualiser</a></span></div>`;
-  if (!st.quota) return head + `<p style="margin:8px 0 0"><b>${fmtDec(st.used)}</b> utilisés · espace illimité</p>`;
+  const app = `<div class="small muted" style="margin-top:4px">Photothèque : <b>${fmtDec(st.appUsed || 0)}</b> (${nf(st.appFiles || 0)} média${(st.appFiles || 0) > 1 ? 's' : ''})</div>`;
+  if (!st.quota) {
+    // Google Drive d'une organisation : pas de limite personnelle exploitable
+    return head + `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:8px">
+        <span style="font-size:26px;font-weight:700">${fmtDec(st.appUsed || 0)}</span><span class="muted">utilisés par la photothèque</span></div>
+      <div class="small muted">Stockage Google Drive fourni par ${st.pooled ? 'la Croix-Rouge (espace partagé de l\'organisation, pas de limite propre à la photothèque)' : 'Google'}${st.accountUsed != null ? ' · votre compte Google utilise ' + fmtDec(st.accountUsed) + ' au total' : ''}.</div>
+      ${st.b2Ready ? '' : '<div class="small muted" style="margin-top:6px">Backblaze n\'est pas configuré : les fichiers sont enregistrés dans Google Drive.</div>'}`;
+  }
   const pct = Math.min(100, st.used / st.quota * 100);
   const remaining = Math.max(0, st.quota - st.used);
   const color = pct >= 95 ? 'var(--red)' : pct >= 80 ? '#d97706' : 'var(--green)';
@@ -807,7 +814,8 @@ function storageCard(st) {
     : pct >= 80 ? '<div class="alert" style="margin-top:10px;background:#fffbeb;color:#92400e">Espace presque plein : les importations seront bloquées à 95 %.</div>' : '';
   return head + `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:8px">
       <span style="font-size:26px;font-weight:700;color:${color}">${fmtDec(remaining)}</span><span class="muted">disponibles</span></div>
-    <div class="small muted">${fmtDec(st.used)} utilisés sur ${fmtDec(st.quota)} · ${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %${st.files != null ? ' · ' + nf(st.files) + ' fichiers' : ''}</div>
+    <div class="small muted">${fmtDec(st.used)} utilisés sur ${fmtDec(st.quota)} · ${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %${st.files != null ? ' · ' + nf(st.files) + ' fichiers dans le stockage' : ''}</div>
+    ${app}
     <div class="bar" style="height:10px;border-radius:6px;margin-top:10px" role="progressbar" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="Espace utilisé">
       <div style="width:${pct}%;background:${color}"></div></div>${alert}`;
 }
