@@ -3,7 +3,6 @@
 <head>
 <base target="_top">
 <meta charset="utf-8">
-<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js"></script>
 <style>
 :root{--red:#E3000F;--red-d:#b8000c;--red-soft:#fdecec;--green:#15803d;--green-soft:#ecfdf3;--fg:#111827;--muted:#6b7280;--border:#e5e7eb;--bg:#f8f9fb;--card:#fff;--radius:12px}
 *{box-sizing:border-box}html,body{margin:0;padding:0}
@@ -581,11 +580,28 @@ async function readExifDateBuiltin(file) {
   return isNaN(d) || d.getFullYear() < 1990 ? null : d;
 }
 
+/** Bibliothèque EXIF externe : chargée uniquement si nécessaire (HEIC…), jamais au démarrage. */
+let exifrLoading = null;
+function loadExifr() {
+  if (window.exifr) return Promise.resolve(true);
+  if (!exifrLoading) {
+    exifrLoading = new Promise(resolve => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js';
+      sc.onload = () => resolve(true);
+      sc.onerror = () => resolve(false);
+      document.head.appendChild(sc);
+      setTimeout(() => resolve(Boolean(window.exifr)), 8000);
+    });
+  }
+  return exifrLoading;
+}
+
 async function extractDate(file, kind) {
   if (kind === 'PHOTO') {
     try { const d = await readExifDateBuiltin(file); if (d) return { date: d, source: 'EXIF' }; } catch (e) {}
   }
-  if (kind === 'PHOTO' && window.exifr) {
+  if (kind === 'PHOTO' && await loadExifr()) {
     try {
       const d = await exifr.parse(file, { pick: ['DateTimeOriginal', 'CreateDate', 'DateTimeDigitized'] });
       const v = d && (d.DateTimeOriginal || d.CreateDate || d.DateTimeDigitized);
@@ -1249,14 +1265,25 @@ async function renderSettings() {
 }
 
 // ================================================================ DÉMARRAGE
-(async function boot() {
-  if (!state.token) return render();
-  document.getElementById('app').innerHTML = '<div class="login"><span class="spin"></span></div>';
+/**
+ * Démarrage instantané : le rôle et le nom sont lus dans le jeton de session (sans appel
+ * serveur). Le jeton reste vérifié par le serveur à CHAQUE action : s'il n'est plus valide,
+ * l'utilisateur est renvoyé vers la connexion.
+ */
+function sessionFromToken(token) {
   try {
-    const s = await call('getSession', state.token);
-    state.role = s.role; state.name = s.name;
-    state.view = s.role === 'ADMIN' ? 'dashboard' : 'import';
-  } catch (e) { state.token = null; store.set('crf_token', null); }
+    const b64 = token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(escape(atob(b64 + '==='.slice((b64.length + 3) % 4))));
+    const p = JSON.parse(json);
+    if ((p.r === 'USER' || p.r === 'ADMIN') && p.exp > Date.now()) return { role: p.r, name: p.n };
+  } catch (e) {}
+  return null;
+}
+(function boot() {
+  const s = state.token && sessionFromToken(state.token);
+  if (!s) { state.token = null; store.set('crf_token', null); return render(); }
+  state.role = s.role; state.name = s.name;
+  state.view = s.role === 'ADMIN' ? 'dashboard' : 'import';
   render();
 })();
 </script>

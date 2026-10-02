@@ -223,7 +223,18 @@ function rowToObj_(name, values, rowIndex) {
   return o;
 }
 
+// Lecture mémorisée pendant UN appel serveur (chaque appel repart de zéro) :
+// évite de relire plusieurs fois toute la feuille au cours d'une même action.
+let _rowsMemo = {};
+
 function readAll_(name) {
+  if (_rowsMemo[name]) return _rowsMemo[name].map(function (o) { return Object.assign({}, o); });
+  const rows = readAllUncached_(name);
+  _rowsMemo[name] = rows;
+  return rows.map(function (o) { return Object.assign({}, o); });
+}
+
+function readAllUncached_(name) {
   const sh = sheet_(name);
   const last = sh.getLastRow();
   if (last < 2) return [];
@@ -248,14 +259,17 @@ function findById_(name, id) {
 }
 
 function append_(name, obj) {
+  delete _rowsMemo[name];
   sheet_(name).appendRow(toRow_(name, obj));
 }
 
 function update_(name, obj) {
+  delete _rowsMemo[name];
   sheet_(name).getRange(obj._row, 1, 1, SHEETS[name].length).setValues([toRow_(name, obj)]);
 }
 
 function deleteRow_(name, obj) {
+  delete _rowsMemo[name];
   sheet_(name).deleteRow(obj._row);
 }
 
@@ -678,11 +692,15 @@ function b2Raw_(auth, op, body) {
 }
 
 /** Connexion à Backblaze (mise en cache 6 h). */
+let _b2AuthMemo = null;
+const _b2TokenMemo = {};
+
 function b2Auth_(force) {
+  if (!force && _b2AuthMemo) return _b2AuthMemo;
   const cache = CacheService.getScriptCache();
   if (!force) {
     const hit = cache.get('b2auth');
-    if (hit) return JSON.parse(hit);
+    if (hit) return (_b2AuthMemo = JSON.parse(hit));
   }
   const p = props_();
   const res = UrlFetchApp.fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
@@ -705,6 +723,7 @@ function b2Auth_(force) {
     auth.bucketName = b.bucketName;
   }
   cache.put('b2auth', JSON.stringify(auth), 21600);
+  _b2AuthMemo = auth;
   return auth;
 }
 
@@ -788,13 +807,15 @@ function b2DeleteAll_(key) {
 
 /** Jeton de lecture pour un préfixe (12 h, mis en cache 6 h → URL stables, images en cache). */
 function b2PrefixToken_(prefix) {
+  if (_b2TokenMemo[prefix]) return _b2TokenMemo[prefix];
   const cache = CacheService.getScriptCache();
   const hit = cache.get('b2dl_' + prefix);
-  if (hit) return hit;
+  if (hit) return (_b2TokenMemo[prefix] = hit);
   const r = b2Call_('b2_get_download_authorization', {
     bucketId: b2Auth_().bucketId, fileNamePrefix: prefix, validDurationInSeconds: 43200, b2CacheControl: B2_CACHE_CONTROL,
   });
   cache.put('b2dl_' + prefix, r.authorizationToken, 21600);
+  _b2TokenMemo[prefix] = r.authorizationToken;
   return r.authorizationToken;
 }
 
@@ -862,39 +883,49 @@ function storageQuotaBytes_() {
   return Math.round((gb > 0 ? gb : 10) * 1e9);
 }
 
-/** Mesure l'espace occupé (mise en cache 10 min ; ajustée à chaque import/suppression). */
+/**
+ * Espace occupé. La mesure Backblaze (liste de tout le bucket) est mise en cache 10 min et
+ * ajustée à chaque import/suppression ; les chiffres de la photothèque sont toujours à jour.
+ */
 function storageInfo_(force) {
   const cache = CacheService.getScriptCache();
+  let info = null;
   if (!force) {
     const hit = cache.get('storageInfo');
-    if (hit) return JSON.parse(hit);
+    if (hit) info = JSON.parse(hit);
   }
-  let info;
-  if (b2Configured_()) {
-    const a = b2Auth_();
-    let used = 0, files = 0, start = null, startId = null;
-    for (let guard = 0; guard < 200; guard++) {
-      const body = { bucketId: a.bucketId, maxFileCount: 10000 };
-      if (start) { body.startFileName = start; if (startId) body.startFileId = startId; }
-      const r = b2Call_('b2_list_file_versions', body);
-      (r.files || []).forEach(function (f) { used += Number(f.contentLength || 0); files++; });
-      if (!r.nextFileName) break;
-      start = r.nextFileName;
-      startId = r.nextFileId;
+  if (!info) {
+    if (b2Configured_()) {
+      const a = b2Auth_();
+      let used = 0, files = 0, start = null, startId = null;
+      for (let guard = 0; guard < 200; guard++) {
+        const body = { bucketId: a.bucketId, maxFileCount: 10000 };
+        if (start) { body.startFileName = start; if (startId) body.startFileId = startId; }
+        const r = b2Call_('b2_list_file_versions', body);
+        (r.files || []).forEach(function (f) { used += Number(f.contentLength || 0); files++; });
+        if (!r.nextFileName) break;
+        start = r.nextFileName;
+        startId = r.nextFileId;
+      }
+      info = { provider: 'Backblaze B2', used: used, quota: storageQuotaBytes_(), files: files };
+    } else {
+      info = { provider: 'Backblaze B2', notConfigured: true, used: 0, quota: 0, files: null };
     }
-    info = { provider: 'Backblaze B2', used: used, quota: storageQuotaBytes_(), files: files };
-  } else {
-    info = { provider: 'Backblaze B2', notConfigured: true, used: 0, quota: 0, files: null };
+    info.measuredAt = nowIso_();
+    cache.put('storageInfo', JSON.stringify(info), 600);
   }
-  // Espace occupé par la PHOTOTHÈQUE elle-même (originaux enregistrés).
-  let app = 0, appFiles = 0;
-  readAll_('Media').forEach(function (m) { if (m.state === 'READY') { app += Number(m.fileSize) || 0; appFiles++; } });
+  // Chiffres propres à la photothèque : recalculés à chaque fois (lecture déjà en mémoire).
+  let app = 0, appFiles = 0, driveLeft = 0;
+  readAll_('Media').forEach(function (m) {
+    if (m.state !== 'READY') return;
+    app += Number(m.fileSize) || 0;
+    appFiles++;
+    if (m.storage !== 'b2') driveLeft++;
+  });
   info.appUsed = app;
   info.appFiles = appFiles;
-  info.driveLeft = readAll_('Media').filter(function (m) { return m.state === 'READY' && m.storage !== 'b2'; }).length;
+  info.driveLeft = driveLeft;
   info.b2Ready = b2Configured_();
-  info.measuredAt = nowIso_();
-  cache.put('storageInfo', JSON.stringify(info), 600);
   return info;
 }
 
