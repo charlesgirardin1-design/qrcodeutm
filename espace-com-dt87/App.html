@@ -11,7 +11,7 @@
 'use strict';
 // Version de l'interface : doit être identique à VERSION_CODE (Code.gs), transmise par le serveur au chargement (BOOT.version).
 // Si elles diffèrent, les deux fichiers ne viennent pas de la même mise à jour : certaines fonctions serveur manqueraient.
-const VERSION_APP = '3.29.0';
+const VERSION_APP = '3.30.0';
 
 const BOOT = window.BOOT || {};
 const S = { token: '', ses: null, dem: null, cal: null, presse: null, admin: null, route: { v: 'accueil' }, ui: { dem: { onglet: null, q: '', ul: '', type: '', resp: '' }, cal: { vue: 'mois', ref: null, off: {}, ul: '', resp: '', st: '' }, res: { q: '', cat: '', gerer: false }, presse: 'suivre', act: '90', admin: 'miseenroute' }, nd: null };
@@ -4274,7 +4274,7 @@ const pastilleResa = s => '<span class="pastille ton-' + (STATUTS_RESA[s] || ['g
 const etatMat = () => (S.ui.mat = Object.assign({ onglet: 'catalogue', q: '', cat: '', dispo: false, vue: 'semaine', ref: null, filtre: '', mes: 'a_venir', g: 'reservations', gr: { statut: 'attente', materiel: '', du: '', au: '', q: '' }, gc: { archives: false, q: '' } }, S.ui.mat || {}));
 const PLANNING = new Map();   // planning déjà reçu (période + matériel), 60 s
 async function chargerMateriel(force) { if (!S.mat || force || Date.now() - S.mat.t > 120000) { const r = await api('api_materiel'); r.t = Date.now(); S.mat = r; } return S.mat; }
-function oublierMateriel() { S.mat = null; PLANNING.clear(); if (S.accueil) S.accueil.t = 0; }
+function oublierMateriel() { S.mat = null; PLANNING.clear(); if (typeof GAL_MAT !== 'undefined') GAL_MAT.clear(); if (S.accueil) S.accueil.t = 0; }
 const matParId = id => ((S.mat && S.mat.items) || []).find(m => m.id === id) || null;
 const hDe = s => String(s || '').slice(11, 16);
 function periodeResa(r) {
@@ -4313,7 +4313,7 @@ function vueCatalogue(c, el) {
     const base = M.items.filter(m => m.actif && !m.archive);
     const l = base.filter(m => (!F.cat || m.categorie === F.cat) && (!F.dispo || m.etat_affiche === 'disponible') && (!mots.length || mots.every(x => normTxt([m.nom, m.reference, m.localisation, m.categorie, m.description].join(' ')).indexOf(x) > -1)));
     const actifs = []; if (F.q) actifs.push(['q', 'Recherche : « ' + F.q + ' »']); if (F.cat) actifs.push(['cat', 'Catégorie : ' + F.cat]); if (F.dispo) actifs.push(['dispo', 'Disponible maintenant']);
-    c.querySelector('#mc-liste').innerHTML = l.length ? l.map(m => '<button type="button" class="mat-carte" data-mat="' + h(m.id) + '">' + vignetteMat(m) + '<span class="mat-txt"><b>' + h(m.nom) + '</b><span class="petit muted">' + h([m.categorie, m.localisation].filter(Boolean).join(' · ')) + '</span>' + pastilleEtat(m.etat_affiche) + '</span></button>').join('')
+    c.querySelector('#mc-liste').innerHTML = l.length ? l.map(m => '<button type="button" class="mat-carte" data-mat="' + h(m.id) + '"><span class="mat-vig-cadre">' + vignetteMat(m) + (m.nb_photos > 1 ? '<span class="mat-nb-photos">' + ic('image') + m.nb_photos + '</span>' : '') + '</span><span class="mat-txt"><b>' + h(m.nom) + '</b><span class="petit muted">' + h([m.categorie, m.localisation].filter(Boolean).join(' · ')) + '</span>' + pastilleEtat(m.etat_affiche) + '</span></button>').join('')
       : actifs.length ? videFiltres('Aucun matériel ne correspond.', 'mc-reinit') : videEtat('box', 'Le catalogue est vide pour l\'instant.' + (M.droits.gerer ? ' Ajoutez le premier matériel depuis l\'onglet « Gestion ».' : ''));
     infoResultats(c.querySelector('#mc-res'), l.length, base.length, ['matériel', 'matériels'], actifs, k => { F[k] = k === 'dispo' ? false : ''; synchro(); dessiner(); }, () => { F.q = F.cat = ''; F.dispo = false; synchro(); dessiner(); });
     const r = c.querySelector('#mc-reinit'); if (r) r.onclick = () => { F.q = F.cat = ''; F.dispo = false; synchro(); dessiner(); };
@@ -4331,14 +4331,182 @@ function ficheMateriel(id, el) {
   noterRecent('materiel', m.id, m.nom);
   const M = S.mat, lig = (k, v) => v ? '<div><div class="k">' + h(k) + '</div><div class="v texte-long">' + h(v) + '</div></div>' : '';
   const reservable = m.actif && !m.archive && ['disponible'].indexOf(m.etat) > -1;
-  const md = modale(m.nom, '<div class="mat-fiche">' + vignetteMat(m, 'grand') + '<div style="min-width:0">' + pastilleEtat(m.etat_affiche) +
+  const raison = !m.actif || m.archive ? 'Ce matériel n\'est pas proposé à la réservation.' : m.etat === 'maintenance' ? 'En maintenance : réservation impossible pour le moment.' : m.etat === 'indisponible' ? 'Indisponible : réservation impossible pour le moment.' : '';
+  // 3.30 : galerie (photo principale en grand, miniatures, visionneuse plein écran) à côté des informations
+  const md = modale(m.nom, '<div class="mat-fiche"><div class="mat-galerie" id="mf-gal"></div><div class="mat-fiche-infos">' + pastilleEtat(m.etat_affiche) +
     (m.description ? '<p class="texte-long" style="margin:10px 0 0">' + h(m.description) + '</p>' : '') + '<div class="infos" style="margin-top:12px">' + lig('Catégorie', m.categorie) + lig('Référence', m.reference) + lig('Localisation', m.localisation) + lig('Responsable', m.responsable_nom) +
     lig('Maintenance', [m.maintenance, m.maintenance_date ? 'prochaine vérification : ' + fmt(m.maintenance_date) : ''].filter(Boolean).join(' — ')) + '</div>' +
-    (m.conditions || M.conditions ? '<div class="indice info">' + ic('info') + '<span><b>Conditions d\'utilisation</b><br>' + h([m.conditions, M.conditions].filter(Boolean).join('\n')) + '</span></div>' : '') + '</div></div>',
+    (m.conditions || M.conditions ? '<div class="indice info">' + ic('info') + '<span><b>Conditions d\'utilisation</b><br>' + h([m.conditions, M.conditions].filter(Boolean).join('\n')) + '</span></div>' : '') +
+    (M.droits.reserver && !reservable && raison ? '<div class="indice attention">' + ic('alert') + '<span>' + h(raison) + '</span></div>' : '') + '</div></div>',
     (fonctionDispo('api_favori') ? boutonFavori('materiel', m.id, m.nom) : '') + '<button class="btn" id="mf-planning">' + ic('calendar') + 'Planning</button>' + (M.droits.gerer ? '<button class="btn" id="mf-modif">' + ic('pen') + 'Modifier</button>' : '') + (M.droits.reserver && reservable ? '<button class="btn principal" id="mf-res">' + ic('plus') + 'Réserver</button>' : ''), true);
+  md.classList.add('modale-mat'); md.style.maxWidth = '';
+  brancherGalerieMat(md.querySelector('#mf-gal'), m);
   md.querySelector('#mf-planning').onclick = () => { fermerModale(); const F = etatMat(); F.filtre = m.id; F.onglet = 'planning'; vMateriel(el || $('#vue')); };
   const r = md.querySelector('#mf-res'); if (r) r.onclick = () => { fermerModale(); const F = etatMat(); F.choix = m.id; F.onglet = 'reserver'; vMateriel(el || $('#vue')); };
   const mo = md.querySelector('#mf-modif'); if (mo) mo.onclick = () => formMateriel(m, () => vMateriel(el || $('#vue')));
+}
+// ---------- Galerie de photos du matériel (3.30) ----------
+// Vignettes de toutes les photos (api_photosMateriel, gardées 2 min) ; grande image chargée à l'affichage (api_photoMateriel),
+// gardée en mémoire (40 au plus). La première photo est la photo principale.
+const GAL_MAT = new Map(), GRANDES_MAT = new Map();
+function oublierGalerie(id) { GAL_MAT.delete(id); Array.from(GRANDES_MAT.keys()).forEach(k => { if (k.indexOf(id + '|') === 0) GRANDES_MAT.delete(k); }); }
+async function photosMat(m) {
+  if (!m.photo && !m.nb_photos) return [];
+  const c = GAL_MAT.get(m.id); if (c && Date.now() - c.t < 120000) return c.photos;
+  const r = await api('api_photosMateriel', m.id); GAL_MAT.set(m.id, { t: Date.now(), photos: r.photos || [] });
+  return r.photos || [];
+}
+async function grandeMat(mid, pid) {
+  const k = mid + '|' + pid; if (GRANDES_MAT.has(k)) return GRANDES_MAT.get(k);
+  const r = await api('api_photoMateriel', mid, pid);
+  if (GRANDES_MAT.size >= 40) GRANDES_MAT.delete(GRANDES_MAT.keys().next().value);
+  GRANDES_MAT.set(k, r.grande); return r.grande;
+}
+// Balayage horizontal (écrans tactiles) : -1 précédent, 1 suivant
+function balayage(el, fn) {
+  let x0 = null, y0 = 0;
+  el.addEventListener('touchstart', e => { if (e.touches.length === 1) { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; } }, { passive: true });
+  el.addEventListener('touchend', e => { if (x0 === null) return; const t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0; x0 = null; if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) fn(dx < 0 ? 1 : -1); }, { passive: true });
+}
+// Fiche : grande photo principale, flèches, compteur, miniatures ; clic → visionneuse plein écran
+function brancherGalerieMat(z, m) {
+  let photos = m.photo ? [{ pid: '', mini: m.photo }] : [], i = 0;
+  const charger = k => { const p = photos[k]; if (!p || !p.pid) return; grandeMat(m.id, p.pid).then(g => { const img = z.querySelector('.mg-principale img'); if (img && i === k && g) img.src = g; }).catch(() => { }); };
+  const aller = k => { if (!photos.length) return; i = (k + photos.length) % photos.length; dessiner(); };
+  const dessiner = () => {
+    if (!document.contains(z)) return;
+    if (!photos.length) { z.innerHTML = vignetteMat(m, 'grand'); return; }
+    const p = photos[i], n = photos.length, g = p.pid && GRANDES_MAT.get(m.id + '|' + p.pid);
+    z.innerHTML = '<div class="mg-scene"><button type="button" class="mg-principale" aria-label="Agrandir la photo ' + (i + 1) + ' sur ' + n + '"><img src="' + h(g || p.mini) + '" alt="' + h(m.nom + ' — photo ' + (i + 1)) + '"><span class="mg-zoom" aria-hidden="true">' + ic('maximize') + '</span></button>' +
+      (n > 1 ? '<button type="button" class="mg-nav prec" aria-label="Photo précédente">' + ic('left') + '</button><button type="button" class="mg-nav suiv" aria-label="Photo suivante">' + ic('right') + '</button><span class="mg-compteur">' + (i + 1) + ' / ' + n + '</span>' : '') + '</div>' +
+      (n > 1 ? '<div class="mg-miniatures">' + photos.map((q, k) => '<button type="button" class="mg-mini' + (k === i ? ' actif' : '') + '" data-k="' + k + '" aria-label="Photo ' + (k + 1) + (k === 0 ? ' (principale)' : '') + '"' + (k === i ? ' aria-current="true"' : '') + '><img src="' + h(q.mini) + '" alt="" loading="lazy"></button>').join('') + '</div>' : '');
+    z.querySelector('.mg-principale').onclick = () => visionneuseMat(m, photos, i, k => { i = k; dessiner(); });
+    z.querySelectorAll('.mg-nav').forEach(b => b.onclick = () => aller(i + (b.classList.contains('prec') ? -1 : 1)));
+    z.querySelectorAll('[data-k]').forEach(b => b.onclick = () => aller(Number(b.dataset.k)));
+    const a = z.querySelector('.mg-mini.actif'); if (a && a.scrollIntoView) { const L = a.parentNode; L.scrollLeft = Math.max(0, a.offsetLeft - (L.clientWidth - a.clientWidth) / 2); }
+    if (!g) charger(i);
+  };
+  z.onkeydown = e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); aller(i + (e.key === 'ArrowLeft' ? -1 : 1)); const b = z.querySelector('.mg-principale'); if (b) b.focus(); } };
+  balayage(z, d => aller(i + d));
+  dessiner();
+  photosMat(m).then(L => { if (L.length) { photos = L; i = 0; dessiner(); } }).catch(() => { });
+}
+// Visionneuse plein écran : flèches, clavier (← → Échap), balayage, miniatures ; focus gardé dans la visionneuse
+function visionneuseMat(m, photos, i0, retour) {
+  let i = i0;
+  const origine = document.activeElement, v = document.createElement('div');
+  v.className = 'mat-visionneuse'; v.setAttribute('role', 'dialog'); v.setAttribute('aria-modal', 'true'); v.setAttribute('aria-label', 'Photos de ' + m.nom); v.tabIndex = -1;
+  const n = photos.length;
+  const dessiner = () => {
+    const p = photos[i], g = p.pid && GRANDES_MAT.get(m.id + '|' + p.pid);
+    v.innerHTML = '<div class="mv-haut"><span class="mv-titre">' + h(m.nom) + (n > 1 ? ' · ' + (i + 1) + ' / ' + n : '') + '</span><button type="button" class="mv-btn" data-mv="fermer" aria-label="Fermer">' + ic('x') + '</button></div>' +
+      '<div class="mv-scene" data-mv="fond"><img src="' + h(g || p.mini) + '" alt="' + h(m.nom + ' — photo ' + (i + 1)) + '">' + (g || !p.pid ? '' : '<span class="spinner mv-charge"></span>') +
+      (n > 1 ? '<button type="button" class="mv-btn mv-nav prec" data-mv="prec" aria-label="Photo précédente">' + ic('left') + '</button><button type="button" class="mv-btn mv-nav suiv" data-mv="suiv" aria-label="Photo suivante">' + ic('right') + '</button>' : '') + '</div>' +
+      (n > 1 ? '<div class="mv-bas">' + photos.map((q, k) => '<button type="button" class="mv-mini' + (k === i ? ' actif' : '') + '" data-mv="' + k + '" aria-label="Photo ' + (k + 1) + '"><img src="' + h(q.mini) + '" alt=""></button>').join('') + '</div>' : '');
+    if (!g && p.pid) { const k = i; grandeMat(m.id, p.pid).then(x => { if (k !== i || !document.contains(v)) return; const img = v.querySelector('.mv-scene img'); if (img && x) img.src = x; const s = v.querySelector('.mv-charge'); if (s) s.remove(); }).catch(() => { const s = v.querySelector('.mv-charge'); if (s) s.remove(); }); }
+    [i + 1, i - 1].forEach(k => { const q = photos[(k + n) % n]; if (q && q.pid && n > 1) grandeMat(m.id, q.pid).catch(() => { }); });   // voisines préchargées
+  };
+  const aller = d => { if (n < 2) return; i = (i + d + n) % n; dessiner(); const b = v.querySelector('[data-mv="' + (d < 0 ? 'prec' : 'suiv') + '"]'); if (b) b.focus(); };
+  const fermer = () => { document.removeEventListener('keydown', clavier, true); v.remove(); if (retour) retour(i); if (origine && document.contains(origine)) { try { origine.focus({ preventScroll: true }); } catch (e) { } } };
+  const clavier = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fermer(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); aller(e.key === 'ArrowLeft' ? -1 : 1); }
+    else if (e.key === 'Tab') {
+      e.stopPropagation();
+      const f = Array.from(v.querySelectorAll('button')), a = f[0], z2 = f[f.length - 1], act = document.activeElement;
+      if (!v.contains(act) || act === v) { e.preventDefault(); (e.shiftKey ? z2 : a).focus(); } else if (e.shiftKey && act === a) { e.preventDefault(); z2.focus(); } else if (!e.shiftKey && act === z2) { e.preventDefault(); a.focus(); }
+    }
+  };
+  v.onclick = e => {
+    const b = e.target.closest('[data-mv]'); if (!b) return;
+    const a = b.dataset.mv;
+    if (a === 'fermer' || (a === 'fond' && e.target === b)) fermer(); else if (a === 'prec') aller(-1); else if (a === 'suiv') aller(1); else if (/^\d+$/.test(a)) { i = Number(a); dessiner(); }
+  };
+  balayage(v, aller);
+  document.addEventListener('keydown', clavier, true);
+  document.body.appendChild(v); dessiner(); v.focus({ preventScroll: true });
+}
+// Grande image fabriquée par le navigateur (≤ 1600 px, JPEG ≤ ~140 Ko : 4 cellules de la base au plus)
+function fabriquerGrandeImage(fichier) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(fichier), img = new Image();
+    img.onload = () => {
+      try {
+        let cote = 1600, d = '';
+        for (let essai = 0; essai < 6 && (!d || d.length > 190000); essai++) {
+          const k = Math.min(1, cote / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+          const x = c.getContext('2d'); x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
+          let q = .85; d = c.toDataURL('image/jpeg', q); while (d.length > 190000 && q > .5) { q -= .08; d = c.toDataURL('image/jpeg', q); }
+          cote = Math.round(cote * .8);
+        }
+        URL.revokeObjectURL(url); d.length <= 190000 ? res({ grande: d, l: img.naturalWidth, h: img.naturalHeight }) : rej(new Error('taille'));
+      } catch (e) { URL.revokeObjectURL(url); rej(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('illisible')); };
+    img.src = url;
+  });
+}
+async function preparerPhotoMat(f) {
+  if (!/^image\/(jpeg|png|webp)$/.test(f.type)) throw { message: '« ' + f.name + ' » : choisissez une image JPG, PNG ou WEBP.' };
+  try { const v = await fabriquerVignette(f), g = await fabriquerGrandeImage(f); return { mini: v.mini, grande: g.grande, l: g.l, h: g.h }; }
+  catch (e) { throw { message: '« ' + f.name + ' » : image illisible.' }; }
+}
+// Gestion (fiche du matériel) : ajouter, supprimer, réordonner, choisir la photo principale.
+// Matériel existant : chaque action est enregistrée aussitôt. Nouveau matériel : photos gardées ici, envoyées après « Ajouter ».
+function gestionPhotosMat(z, m, auMaj) {
+  const G = { photos: [], file: [], occupe: false };
+  const nouveau = !m.id;
+  const liste = () => nouveau ? G.file : G.photos;
+  const dessiner = () => {
+    const L = liste();
+    z.querySelector('.mga-liste').innerHTML = L.length ? L.map((p, k) => '<div class="mga-item' + (k === 0 ? ' principale' : '') + '" data-k="' + k + '"><img src="' + h(p.mini) + '" alt="Photo ' + (k + 1) + '">' +
+      (k === 0 ? '<span class="mga-badge">' + ic('star') + 'Principale</span>' : '') +
+      '<span class="mga-outils"><button type="button" class="mga-btn" data-a="gauche" aria-label="Déplacer avant"' + (k === 0 ? ' disabled' : '') + '>' + ic('left') + '</button>' +
+      (k > 0 ? '<button type="button" class="mga-btn" data-a="principale" aria-label="Choisir comme photo principale" title="Photo principale">' + ic('star') + '</button>' : '') +
+      '<button type="button" class="mga-btn" data-a="droite" aria-label="Déplacer après"' + (k === L.length - 1 ? ' disabled' : '') + '>' + ic('right') + '</button>' +
+      '<button type="button" class="mga-btn danger" data-a="suppr" aria-label="Supprimer cette photo">' + ic('trash') + '</button></span></div>').join('')
+      : '<p class="petit muted" style="margin:0">Aucune photo pour l\'instant.</p>';
+    z.querySelector('.mga-nb').textContent = L.length ? L.length + ' photo' + (L.length > 1 ? 's' : '') : '';
+    z.querySelectorAll('.mga-item [data-a]').forEach(b => b.onclick = () => action(Number(b.closest('[data-k]').dataset.k), b.dataset.a));
+  };
+  const etat = (txt) => { const e = z.querySelector('.mga-etat'); e.innerHTML = txt ? '<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> ' + h(txt) : ''; z.classList.toggle('occupe', !!txt); };
+  const reponse = r => { G.photos = r.photos || []; oublierGalerie(m.id); GAL_MAT.set(m.id, { t: Date.now(), photos: G.photos }); if (r.materiel && auMaj) auMaj(r.materiel); dessiner(); };
+  const action = async (k, a) => {
+    if (G.occupe) return;
+    const L = liste().slice(), p = L[k];
+    if (a === 'suppr' && !confirm('Supprimer cette photo' + (k === 0 && L.length > 1 ? ' (photo principale : la suivante la remplacera)' : '') + ' ?')) return;
+    const ordre = a === 'gauche' ? (L.splice(k - 1, 0, L.splice(k, 1)[0]), L) : a === 'droite' ? (L.splice(k + 1, 0, L.splice(k, 1)[0]), L) : a === 'principale' ? (L.unshift(L.splice(k, 1)[0]), L) : null;
+    if (nouveau) { if (a === 'suppr') G.file.splice(k, 1); else G.file = ordre; return dessiner(); }
+    G.occupe = true; etat(a === 'suppr' ? 'Suppression…' : 'Enregistrement de l\'ordre…');
+    try { reponse(a === 'suppr' ? await api('api_supprimerPhotoMateriel', m.id, p.pid) : await api('api_organiserPhotosMateriel', m.id, ordre.map(x => x.pid))); if (a === 'principale') toast('Photo principale choisie.'); }
+    catch (x) { erreur(x); try { reponse({ photos: (await api('api_photosMateriel', m.id)).photos }); } catch (e) { } }
+    G.occupe = false; etat('');
+  };
+  // Envoi, une photo après l'autre (une coupure n'annule pas les photos déjà enregistrées)
+  const envoyer = async (id, prets) => {
+    let ok = 0;
+    for (let k = 0; k < prets.length; k++) {
+      etat('Enregistrement de la photo ' + (k + 1) + ' sur ' + prets.length + '…');
+      try { const r = await api('api_ajouterPhotoMateriel', id, prets[k]); ok++; if (!nouveau) reponse(r); else if (r.materiel && auMaj) auMaj(r.materiel); }
+      catch (x) { erreur(x); }
+    }
+    etat(''); return ok;
+  };
+  z.innerHTML = '<div class="mga-tete"><span class="mga-nb petit muted"></span><label class="btn petit"><input type="file" class="mga-fic" accept="image/jpeg,image/png,image/webp" multiple hidden>' + ic('upload') + 'Ajouter des photos</label></div>' +
+    '<div class="mga-liste"></div><div class="mga-etat petit muted"></div><div class="aide">Autant de photos que nécessaire. La première est la photo principale (catalogue et fiche) ; ' + ic('star') + ' pour en choisir une autre, flèches pour l\'ordre. ' + (nouveau ? 'Elles sont enregistrées avec le matériel.' : 'Chaque modification des photos est enregistrée aussitôt.') + '</div>';
+  z.querySelector('.mga-fic').onchange = async ev => {
+    const fl = Array.from(ev.target.files || []); ev.target.value = ''; if (!fl.length || G.occupe) return;
+    G.occupe = true; const prets = [];
+    for (let k = 0; k < fl.length; k++) { etat('Préparation de la photo ' + (k + 1) + ' sur ' + fl.length + '…'); try { prets.push(await preparerPhotoMat(fl[k])); } catch (x) { erreur(x); } }
+    if (nouveau) { G.file = G.file.concat(prets); etat(''); dessiner(); }
+    else if (prets.length) { const n = await envoyer(m.id, prets); if (n) toast(n + ' photo' + (n > 1 ? 's ajoutées.' : ' ajoutée.')); }
+    else etat('');
+    G.occupe = false;
+  };
+  dessiner();
+  if (!nouveau && (m.photo || m.nb_photos)) { etat('Chargement des photos…'); api('api_photosMateriel', m.id).then(r => { G.photos = r.photos || []; etat(''); dessiner(); }).catch(x => { etat(''); erreur(x); }); }
+  return { envoyerApresCreation: async id => G.file.length ? envoyer(id, G.file) : 0, enCours: () => G.occupe };
 }
 
 // ---------- Réserver : disponibilité réelle affichée avant confirmation (vérifiée à nouveau par le serveur) ----------
@@ -4617,18 +4785,17 @@ function gestionCatalogue(c, redessiner) {
   c.querySelector('#gc-ajout').onclick = () => formMateriel(null, () => gestionCatalogue(c, redessiner));
   dessiner();
 }
-// Fiche matériel (création / modification) ; photo réduite par le navigateur (≤ 320 px), contrôlée par le serveur
+// Fiche matériel (création / modification) ; photos : galerie (3.30), réduites par le navigateur, contrôlées par le serveur
 function formMateriel(m, apres) {
   const M = S.mat, n = !m; m = m || { etat: 'disponible', validation: '' };
-  let photo;   // undefined = inchangée ; '' = retirée ; data URL = nouvelle
   const equipe = (S.ses.equipe || []);
   const resp = m.responsable && !equipe.some(x => x.email === m.responsable) ? [{ email: m.responsable, nom: m.responsable_nom || m.responsable }].concat(equipe) : equipe;
-  const md = modale(n ? 'Ajouter du matériel' : 'Modifier le matériel', '<div class="mat-form-photo"><span id="fm-vig">' + vignetteMat(m, 'grand') + '</span><div><label class="btn petit"><input type="file" id="fm-fic" accept="image/jpeg,image/png,image/webp" hidden>' + ic('upload') + 'Choisir une photo</label> <button type="button" class="btn petit fantome" id="fm-sans"' + (m.photo ? '' : ' hidden') + '>Retirer la photo</button><div class="aide">Réduite automatiquement (vignette).</div></div></div>' +
+  const md = modale(n ? 'Ajouter du matériel' : 'Modifier le matériel', '<div class="form-ligne"><label>Photos</label><div class="mat-gal-admin" id="fm-gal"></div></div>' +
     '<div class="form-2"><div class="form-ligne"><label for="fm-nom">Nom <span class="req">*</span></label><input class="champ" id="fm-nom" maxlength="120" value="' + h(m.nom || '') + '"></div>' +
     '<div class="form-ligne"><label for="fm-cat">Catégorie</label><select class="champ" id="fm-cat"><option value="">—</option>' + M.categories.map(x => '<option' + (x === m.categorie ? ' selected' : '') + '>' + h(x) + '</option>').join('') + '</select></div>' +
     '<div class="form-ligne"><label for="fm-ref">Référence / numéro interne</label><input class="champ" id="fm-ref" maxlength="60" value="' + h(m.reference || '') + '"></div>' +
     '<div class="form-ligne"><label for="fm-loc">Localisation</label><input class="champ" id="fm-loc" maxlength="160" value="' + h(m.localisation || '') + '"></div>' +
-    '<div class="form-ligne"><label for="fm-resp">Responsable</label><select class="champ" id="fm-resp"><option value="">—</option>' + resp.map(x => '<option value="' + h(x.email) + '"' + (x.email === m.responsable ? ' selected' : '') + '>' + h(x.nom) + '</option>').join('') + '</select><div class="aide">Reçoit les demandes de réservation si aucun destinataire n\'est réglé dans l\'administration.</div></div>' +
+    '<div class="form-ligne"><label for="fm-resp">Responsable</label><select class="champ" id="fm-resp"><option value="">—</option>' + resp.map(x => '<option value="' + h(x.email) + '"' + (x.email === m.responsable ? ' selected' : '') + '>' + h(x.nom) + '</option>').join('') + '</select><div class="aide">Reçoit par e-mail chaque nouvelle réservation de ce matériel (en plus des destinataires réglés dans l\'administration).</div></div>' +
     '<div class="form-ligne"><label for="fm-etat">État</label><select class="champ" id="fm-etat">' + [['disponible', 'Disponible'], ['indisponible', 'Indisponible'], ['maintenance', 'Maintenance']].map(x => '<option value="' + x[0] + '"' + (x[0] === m.etat ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select><div class="aide">« Réservé » s\'affiche automatiquement pendant une réservation.</div></div></div>' +
     '<div class="form-ligne"><label for="fm-desc">Description</label><textarea class="champ" id="fm-desc" maxlength="2000">' + h(m.description || '') + '</textarea></div>' +
     '<div class="form-ligne"><label for="fm-cond">Conditions d\'utilisation</label><textarea class="champ" id="fm-cond" maxlength="2000">' + h(m.conditions || '') + '</textarea></div>' +
@@ -4636,23 +4803,20 @@ function formMateriel(m, apres) {
     '<div class="form-ligne"><label for="fm-val">Validation des réservations</label><select class="champ" id="fm-val">' + [['', 'Réglage général (' + (M.validation === 'auto' ? 'automatique' : 'par l\'équipe') + ')'], ['auto', 'Confirmation automatique'], ['admin', 'Validation par l\'équipe']].map(x => '<option value="' + x[0] + '"' + (x[0] === (m.validation || '') ? ' selected' : '') + '>' + h(x[1]) + '</option>').join('') + '</select></div>' +
     '<div class="form-ligne"><label for="fm-ordre">Ordre d\'affichage</label><input class="champ" type="number" id="fm-ordre" value="' + h(m.ordre || 0) + '"></div></div>',
     '<button class="btn" data-fermer>Annuler</button><button class="btn principal" id="fm-ok">' + ic('check') + (n ? 'Ajouter' : 'Enregistrer') + '</button>', true);
-  md.querySelector('#fm-fic').onchange = async ev => {
-    const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
-    if (!/^image\/(jpeg|png|webp)$/.test(f.type)) return toast('Choisissez une image JPG, PNG ou WEBP.', true);
-    try { const v = await fabriquerVignette(f); photo = v.mini; md.querySelector('#fm-vig').innerHTML = vignetteMat({ photo: photo }, 'grand'); md.querySelector('#fm-sans').hidden = false; } catch (e) { toast('Image illisible.', true); }
-  };
-  md.querySelector('#fm-sans').onclick = () => { photo = ''; md.querySelector('#fm-vig').innerHTML = vignetteMat({}, 'grand'); md.querySelector('#fm-sans').hidden = true; };
+  const majItem = x => { const i = M.items.findIndex(z => z.id === x.id); if (i > -1) M.items[i] = x; else M.items.push(x); };
+  const GP = gestionPhotosMat(md.querySelector('#fm-gal'), n ? {} : m, x => { majItem(x); apres(); });
   md.querySelector('#fm-ok').onclick = async ev => {
     const v = id => md.querySelector(id).value;
     if (!v('#fm-nom').trim()) { marquerInvalides(['#fm-nom']); return toast('Donnez un nom au matériel.', true); }
+    if (GP.enCours()) return toast('Patientez : des photos sont en cours d\'enregistrement.', true);
     occupe(ev.currentTarget, true);
     try {
       const x = { id: n ? '' : m.id, nom: v('#fm-nom'), categorie: v('#fm-cat'), reference: v('#fm-ref'), localisation: v('#fm-loc'), responsable: v('#fm-resp'), etat: v('#fm-etat'), description: v('#fm-desc'), conditions: v('#fm-cond'), maintenance: v('#fm-maint'), maintenance_date: v('#fm-mdate'), validation: v('#fm-val'), ordre: Number(v('#fm-ordre')) || 0 };
-      if (photo !== undefined) x.photo = photo;
       const r = await api('api_enregistrerMateriel', x);
-      const i = M.items.findIndex(z => z.id === r.materiel.id); if (i > -1) M.items[i] = r.materiel; else M.items.push(r.materiel);
+      majItem(r.materiel);
+      const nbP = n ? await GP.envoyerApresCreation(r.materiel.id) : 0;
       PLANNING.clear(); fermerModale();
-      toast(n ? 'Matériel ajouté au catalogue.' : 'Matériel enregistré.' + (r.reservations_a_revoir ? ' Attention : ' + pluriel(r.reservations_a_revoir, 'réservation à venir', 'réservations à venir') + ' sur ce matériel (voir Gestion > Réservations).' : ''));
+      toast(n ? 'Matériel ajouté au catalogue' + (nbP ? ' avec ' + nbP + ' photo' + (nbP > 1 ? 's' : '') : '') + '.' : 'Matériel enregistré.' + (r.reservations_a_revoir ? ' Attention : ' + pluriel(r.reservations_a_revoir, 'réservation à venir', 'réservations à venir') + ' sur ce matériel (voir Gestion > Réservations).' : ''));
       apres();
     } catch (x) { erreur(x); occupe(ev.currentTarget, false); }
   };
@@ -5335,7 +5499,7 @@ const ADMIN_SECTIONS = [
   ['Calendrier et pôles', [['calendrier', 'Calendrier', 'calendar'], ['poles', 'Presse et pôle image', 'camera']]],
   ['Notifications', [['notifications', 'Destinataires et envois', 'mail'], ['modeles', 'Modèles d\'e-mails', 'message']]],
   ['Drive partagé', [['drive', 'Dossiers, connexion, tests', 'drive']]],
-  ['Journal et sauvegardes', [['journal', 'Journal de sécurité', 'list'], ['sauvegarde', 'Sauvegarde, export, duplication', 'database']]],
+  ['Journal et sauvegardes', [['journal', 'Journal de sécurité', 'list'], ['sauvegarde', 'Sauvegarde, export, duplication', 'database'], ['projet', 'Fichiers du projet (export / import)', 'file']]],
   ['Configuration', [['etat', 'Configuration et retour arrière', 'flag'], ['identite', 'Identité et logos', 'star'], ['connexion_page', 'Page de connexion', 'lock'], ['apparence', 'Apparence et thème', 'palette'], ['animations', 'Animations', 'sparkle'], ['navigation', 'Navigation', 'menu'], ['textes', 'Textes et messages', 'pen'], ['aide', 'Aide et FAQ', 'help']]],
 ];
 // Écran de gestion correspondant à une section de réglages (un clic pour passer du réglage à l'action)
@@ -5414,7 +5578,7 @@ async function vAdmin(el) {
   $('#a-sel').onchange = ev => changer(ev.target.value);
   if ($('#a-mode')) $('#a-mode').onclick = () => { if (sale() && !confirm('Des modifications de l\'administration ne sont pas enregistrées : elles seront perdues. Continuer ?')) return; annulerBrouillon(); ouvrirModeUtilisateur(); };
   // Filtre des sections (titre et groupe ; mots usuels compris : couleur → Apparence, mot de passe → Connexion…)
-  const SYN = { apparence: 'couleur theme sombre police logo design', animations: 'mouvement', roles: 'droit permission acces', securite: 'connexion session deconnexion domaine', utilisateurs: 'personne profil compte membre', notifications: 'e-mail mail alerte', modeles: 'e-mail mail', drive: 'dossier fichier', sauvegarde: 'export import restaurer copie', etat: 'retour arriere configuration', journal: 'securite historique refus', aide: 'faq question', types: 'delai formulaire', ul: 'unite locale' };
+  const SYN = { projet: 'code fichier gs html json manifeste appsscript dupliquer duplication copie export import restaurer nouvelle dt delegation', apparence: 'couleur theme sombre police logo design', animations: 'mouvement', roles: 'droit permission acces', securite: 'connexion session deconnexion domaine', utilisateurs: 'personne profil compte membre', notifications: 'e-mail mail alerte', modeles: 'e-mail mail', drive: 'dossier fichier', sauvegarde: 'export import restaurer copie', etat: 'retour arriere configuration', journal: 'securite historique refus', aide: 'faq question', types: 'delai formulaire', ul: 'unite locale' };
   const filtrer = () => {
     const mots = motsRecherche($('#a-filtre').value); S.ui.adminFiltre = $('#a-filtre').value;
     el.querySelectorAll('.admin-nav [data-sec]').forEach(a => { a.hidden = !!mots.length && !mots.every(m => normTxt(a.textContent + ' ' + a.dataset.g + ' ' + (SYN[a.dataset.sec] || '')).indexOf(m) > -1); });
@@ -5525,7 +5689,7 @@ const aideBloc = t => '<p class="petit muted" style="max-width:760px;margin-bott
 const carte = (titre, contenu) => '<div class="carte" style="margin-bottom:16px"><div class="tete"><h3>' + titre + '</h3></div><div class="corps">' + contenu + '</div></div>';
 
 // Libellés des événements du journal de sécurité (Journal, fiche d'un profil, tableau de bord de l'accueil)
-const LIB_JOURNAL = { import_echec: 'Échec d\'import (photothèque)', erreur_serveur: 'Erreur technique (serveur)', mode_utilisateur: 'Mode utilisateur', fichier_joint: 'Fichier joint', fichier_retire: 'Fichier retiré', refus_fichier: 'Fichier refusé (droits)', fichier_indisponible: 'Fichier indisponible', photos_orphelines: 'Envois de photos abandonnés retirés', connexion: 'Connexion', refus: 'Accès refusé', refus_permission: 'Action refusée (rôle)', refus_google: 'Jeton Google refusé', inscription: 'Profil créé (inscription)', notification_inscription: 'Notification d\'inscription envoyée', notification_echec: 'Échec de notification', utilisateur_ajoute: 'Profil ajouté', utilisateur_modifie: 'Profil modifié', role_modifie: 'Rôle modifié', acces_desactive: 'Accès désactivé', acces_reactive: 'Accès réactivé', acces_revoque: 'Accès révoqué', revocation_annulee: 'Révocation annulée', transfert_admin: 'Transfert d\'administration', inscription_auto: 'Inscription automatique', lien_envoye: 'Lien de connexion envoyé', deconnexion: 'Déconnexion', expiration: 'Session expirée (inactivité)', configuration: 'Configuration modifiée', export: 'Export', export_drive: 'Export dans le Drive', import: 'Import', restauration: 'Restauration', sauvegarde: 'Sauvegarde', copie_base: 'Copie de la base', mode: 'Changement de mode (ancien mode démo)', migration: 'Migration (suppression du mode démo)', demo: 'Données de démonstration (ancien)', installation: 'Installation', acces_administrateur: 'Accès administrateur (éditeur)', drive_verifie: 'Vérification du Drive', drive_arborescence: 'Arborescence Drive', drive_repare: 'Drive complété / réparé', drive_test: 'Test d\'un dossier Drive', drive_echec: 'Échec Drive', ressource_deposee: 'Ressource déposée', ressource_ajoutee: 'Ressource ajoutée (lien)', ressource_modifiee: 'Ressource modifiée', ressource_importee: 'Fichier importé', ressource_remplacee: 'Fichier remplacé', ressource_rattachee: 'Fichier rattaché', ressource_supprimee: 'Ressource supprimée', ressources_ordre: 'Ordre des ressources', refus_ressource: 'Fichier refusé (droits)', profil_modifie: 'Profil modifié par la personne', photo_modifiee: 'Photo de profil', photo_supprimee: 'Photo supprimée', table_utilisateurs: 'Utilisateurs modifiés', table_ul: 'UL modifiées', table_types: 'Types modifiés', table_ressources: 'Ressources modifiées', faq_ajoutee: 'Question d\'aide ajoutée', faq_modifiee: 'Question d\'aide modifiée', faq_supprimee: 'Question d\'aide supprimée', faq_ordre: 'Ordre de la FAQ', signalement: 'Message à l\'équipe (aide)', photo_importee: 'Photo importée', photos_modifiees: 'Photos modifiées', photos_publier: 'Photos publiées', photos_restreindre: 'Photos restreintes', photos_archiver: 'Photos archivées', photos_desarchiver: 'Photos désarchivées', photos_corbeille: 'Photos mises à la corbeille', photos_restaurer: 'Photos restaurées', photos_supprimees: 'Photos supprimées définitivement', photos_export: 'Photos téléchargées (ZIP)', album_cree: 'Album créé', album_modifie: 'Album modifié', album_photos: 'Photos d\'un album', album_supprime: 'Album supprimé', refus_photo: 'Photo refusée (droits)' };
+const LIB_JOURNAL = { projet_export: 'Export de fichiers du projet', projet_import: 'Import de fichiers du projet', projet_publication: 'Publication d\'une version', materiel_photos: 'Photos du matériel', import_echec: 'Échec d\'import (photothèque)', erreur_serveur: 'Erreur technique (serveur)', mode_utilisateur: 'Mode utilisateur', fichier_joint: 'Fichier joint', fichier_retire: 'Fichier retiré', refus_fichier: 'Fichier refusé (droits)', fichier_indisponible: 'Fichier indisponible', photos_orphelines: 'Envois de photos abandonnés retirés', connexion: 'Connexion', refus: 'Accès refusé', refus_permission: 'Action refusée (rôle)', refus_google: 'Jeton Google refusé', inscription: 'Profil créé (inscription)', notification_inscription: 'Notification d\'inscription envoyée', notification_echec: 'Échec de notification', utilisateur_ajoute: 'Profil ajouté', utilisateur_modifie: 'Profil modifié', role_modifie: 'Rôle modifié', acces_desactive: 'Accès désactivé', acces_reactive: 'Accès réactivé', acces_revoque: 'Accès révoqué', revocation_annulee: 'Révocation annulée', transfert_admin: 'Transfert d\'administration', inscription_auto: 'Inscription automatique', lien_envoye: 'Lien de connexion envoyé', deconnexion: 'Déconnexion', expiration: 'Session expirée (inactivité)', configuration: 'Configuration modifiée', export: 'Export', export_drive: 'Export dans le Drive', import: 'Import', restauration: 'Restauration', sauvegarde: 'Sauvegarde', copie_base: 'Copie de la base', mode: 'Changement de mode (ancien mode démo)', migration: 'Migration (suppression du mode démo)', demo: 'Données de démonstration (ancien)', installation: 'Installation', acces_administrateur: 'Accès administrateur (éditeur)', drive_verifie: 'Vérification du Drive', drive_arborescence: 'Arborescence Drive', drive_repare: 'Drive complété / réparé', drive_test: 'Test d\'un dossier Drive', drive_echec: 'Échec Drive', ressource_deposee: 'Ressource déposée', ressource_ajoutee: 'Ressource ajoutée (lien)', ressource_modifiee: 'Ressource modifiée', ressource_importee: 'Fichier importé', ressource_remplacee: 'Fichier remplacé', ressource_rattachee: 'Fichier rattaché', ressource_supprimee: 'Ressource supprimée', ressources_ordre: 'Ordre des ressources', refus_ressource: 'Fichier refusé (droits)', profil_modifie: 'Profil modifié par la personne', photo_modifiee: 'Photo de profil', photo_supprimee: 'Photo supprimée', table_utilisateurs: 'Utilisateurs modifiés', table_ul: 'UL modifiées', table_types: 'Types modifiés', table_ressources: 'Ressources modifiées', faq_ajoutee: 'Question d\'aide ajoutée', faq_modifiee: 'Question d\'aide modifiée', faq_supprimee: 'Question d\'aide supprimée', faq_ordre: 'Ordre de la FAQ', signalement: 'Message à l\'équipe (aide)', photo_importee: 'Photo importée', photos_modifiees: 'Photos modifiées', photos_publier: 'Photos publiées', photos_restreindre: 'Photos restreintes', photos_archiver: 'Photos archivées', photos_desarchiver: 'Photos désarchivées', photos_corbeille: 'Photos mises à la corbeille', photos_restaurer: 'Photos restaurées', photos_supprimees: 'Photos supprimées définitivement', photos_export: 'Photos téléchargées (ZIP)', album_cree: 'Album créé', album_modifie: 'Album modifié', album_photos: 'Photos d\'un album', album_supprime: 'Album supprimé', refus_photo: 'Photo refusée (droits)' };
 // ---------- sections ----------
 const SECTIONS_ADMIN = {
   // Tableau de bord de l'administration : données réelles du serveur (résumé déjà reçu avec l'accueil s'il a moins d'une minute)
@@ -5881,7 +6045,7 @@ const SECTIONS_ADMIN = {
         fChamp('materiel.conditions', 'Conditions générales d\'utilisation (affichées avant la confirmation)', 'textarea', 'S\'ajoutent aux conditions propres à chaque matériel ; la personne doit les accepter.')) +
       carte('Notifications', fChamp('materiel.notifier', 'Envoyer les e-mails de réservation', 'bool', 'Nouvelle demande, confirmation, refus, annulation, modification.') +
         fChamp('materiel.rappels', 'Rappels : la veille de la réservation et le jour du retour', 'bool', 'Dans l\'application ; par e-mail aussi si les e-mails de réservation sont activés.') +
-        fChamp('materiel.emails_gestion', 'Destinataires des nouvelles réservations', 'text', 'Adresses séparées par des virgules. Vide : le responsable du matériel, sinon les personnes qui gèrent les réservations.')) +
+        fChamp('materiel.emails_gestion', 'Destinataires des nouvelles réservations', 'text', 'Adresses séparées par des virgules, prévenues de chaque nouvelle réservation, en plus du responsable du matériel. Vide et aucun responsable : les personnes qui gèrent les réservations.')) +
       '<h3 style="margin:6px 0 10px">Catégories de matériel</h3>';
     brancherChamps(c);
     editeurListe(c, L.categories, [{ k: 'nom', label: 'Catégorie', w: 280 }], { ordre: true, ajout: { nom: '' }, ajoutLibelle: 'Ajouter une catégorie' }, () => SECTIONS_ADMIN.materiel(c));
@@ -6282,7 +6446,7 @@ const SECTIONS_ADMIN = {
       carte('Sauvegarder maintenant', '<p class="petit muted">Crée une version datée de la configuration (avec votre nom) dans le dossier « Sauvegardes » du Drive partagé.</p>' + (fonction('sauvegardes') ? '' : nonConfigure('sauvegardes')) + '<div class="form-ligne"><input class="champ" id="s-comm" placeholder="Commentaire (facultatif) : ex. « avant la rentrée »" maxlength="150"></div><button class="btn principal" id="s-maint">' + ic('database') + 'Sauvegarder la configuration</button>') +
       carte('Sauvegarde complète des données', '<p class="petit muted">Copie de toute la base (demandes, historique, calendrier, presse, journal) dans le dossier Sauvegardes.</p><button class="btn" id="s-copie">' + ic('database') + 'Créer une copie de la base</button>') +
       carte('Exporter dans le Drive partagé', '<p class="petit muted">Le fichier de configuration est rangé dans « 08 - Configurations » : pratique pour le transmettre à une autre délégation.</p>' + (fonction('exports') ? '' : nonConfigure('exports')) + '<button class="btn" id="s-export-drive">' + ic('drive') + 'Exporter dans le Drive</button>') +
-      carte('Dupliquer pour une autre délégation', '<ol class="petit" style="margin:0;padding-left:18px"><li>Exportez la configuration (ci-dessus).</li><li>Dans l\'autre délégation : nouveau projet Apps Script, copier les 6 fichiers, adapter ConfigInitiale (nom, code, UL), exécuter installer().</li><li>Dans son Administration : Importer le fichier, en décochant Identité, Unités locales, Utilisateurs, Drive et Sécurité.</li><li>Régler son Drive partagé, ses utilisateurs, puis relancer le diagnostic.</li></ol><p class="petit muted" style="margin-top:8px">Détail : guide « Duplication DT ».</p>') +
+      carte('Dupliquer pour une autre délégation', '<p class="petit muted" style="margin-top:0">Export / import des 6 fichiers du projet et préparation d\'un projet pour une nouvelle DT (ConfigInitiale adaptée, sans les données de cette délégation).</p><button class="btn principal" id="s-projet">' + ic('file') + 'Fichiers du projet et duplication ' + ic('right') + '</button><p class="tres-petit muted" style="margin:8px 0 0">Ensuite, dans la nouvelle DT, vous pourrez importer ce fichier de configuration en décochant Identité, Unités locales, Utilisateurs, Drive et Sécurité.</p>') +
       carte('Informations techniques', '<div class="infos" style="grid-template-columns:1fr"><div><div class="k">Configuration</div><div class="v">n° ' + (m.numero || 0) + ' · ' + (m.modifie_le ? fmt(m.modifie_le.slice(0, 10)) + ' par ' + h(m.modifie_par) : '—') + '</div></div><div><div class="k">Version du code / format</div><div class="v">' + h(T.version_code) + ' / ' + h(T.version_schema) + '</div></div></div>' +
         '<div class="infos" style="grid-template-columns:1fr;margin-top:8px"><div><div class="k">Compte qui exécute l\'application</div><div class="v">' + h(T.compte_execution || '—') + '</div></div></div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' + [[T.base, 'Base de données'], [T.sauvegardes, 'Dossier Sauvegardes'], [T.configurations, 'Dossier Configurations'], [T.fichiers, 'Fichiers des demandes'], [T.url_app, 'Adresse de l\'application']].filter(x => x[0]).map(x => '<a class="btn petit" href="' + lien(x[0]) + '" target="_blank" rel="noopener">' + ic('external') + h(x[1]) + '</a>').join('') + '</div>') +
@@ -6297,6 +6461,7 @@ const SECTIONS_ADMIN = {
       } catch (x) { erreur(x); }
       occupe(ev.currentTarget, false);
     };
+    $('#s-projet').onclick = () => { S.ui.admin = 'projet'; vAdmin($('#vue')); };
     $('#s-import').onchange = ev => { const f = ev.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => apercuImport(String(r.result), 'Import de ' + f.name); r.readAsText(f); ev.target.value = ''; };
     $('#s-maint').onclick = async ev => { occupe(ev.currentTarget, true); try { const url = await api('api_sauvegarderMaintenant', $('#s-comm').value.trim()); toast('Sauvegarde créée.'); SECTIONS_ADMIN.sauvegarde(c); } catch (x) { erreur(x); occupe(ev.currentTarget, false); } };
     $('#s-export-drive').onclick = async ev => { occupe(ev.currentTarget, true); try { const url = await api('api_exporterDrive'); modale('Export rangé dans le Drive', '<p>Le fichier est dans le dossier « 08 - Configurations ».</p><a class="btn principal" href="' + lien(url) + '" target="_blank" rel="noopener">' + ic('external') + 'Ouvrir le fichier</a>', '<button class="btn" data-fermer>Fermer</button>'); } catch (x) { erreur(x); } occupe(ev.currentTarget, false); };
@@ -6307,6 +6472,7 @@ const SECTIONS_ADMIN = {
       c.querySelectorAll('[data-rest]').forEach(b => b.onclick = async () => { occupe(b, true); try { apercuImport(await api('api_contenuVersion', b.dataset.rest), 'Restauration de la version du ' + b.closest('tr').firstChild.textContent); } catch (x) { erreur(x); } occupe(b, false); });
     } catch (x) { $('#s-versions').innerHTML = videEtat('alert', h(x.message || '')); }
   },
+  projet(c) { return sectionProjet(c); },
   async etat(c) {
     const aide = aideBloc('Configuration progressive : ce qui est configuré fonctionne ; une fonction non configurée reste indisponible et signalée, le reste de l\'application fonctionne normalement. Retour arrière : la configuration précédente est toujours conservée.');
     c.innerHTML = aide + squelette(3);
@@ -6323,6 +6489,198 @@ const SECTIONS_ADMIN = {
     const b5 = $('#et-prec'); if (b5) b5.onclick = async ev => { if (!confirm('Annuler le dernier enregistrement de la configuration et revenir à la version précédente ?')) return; occupe(ev.currentTarget, true); try { const n = await api('api_restaurerConfigPrecedente', 'RESTAURER'); S.ses = await api('api_session'); await chargerAdmin(); toast('Configuration précédente restaurée (n° ' + n + ').'); rendre(); } catch (x) { erreur(x); occupe(ev.currentTarget, false); } };
   },
 };
+// ---------- Fichiers du projet (3.30) : export / import des 6 fichiers, duplication pour une autre délégation ----------
+// Le serveur lit et écrit le CONTENU RÉEL du projet Apps Script (API Apps Script) ; ici : choix des fichiers, aperçu des
+// contrôles, confirmation. Rien n'est remplacé sans analyse complète, confirmation explicite et sauvegarde du projet actuel.
+const FICHIERS_PROJET = [['Code.gs', 'Code serveur : données, droits, e-mails'], ['appsscript.json', 'Manifeste : fuseau horaire, autorisations, application Web'], ['ConfigInitiale.html', 'Configuration de départ de la délégation'],
+  ['Styles.html', 'Apparence (feuille de style)'], ['App.html', 'Interface (JavaScript)'], ['Index.html', 'Page de l\'application (inclut Styles et App)']];
+const ACCEPT_PROJET = '.gs,.html,.json,.txt,.js,.zip,text/plain,text/html,application/json,application/zip';
+function telechargerTexte(nom, contenu, mime) { telechargerBlob({ url: URL.createObjectURL(new Blob([contenu], { type: (mime || 'text/plain') + ';charset=utf-8' })), nom: nom }); }
+const lireTexte = f => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => ko(new Error('lecture')); r.readAsText(f, 'UTF-8'); });
+const lireBase64 = f => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => ko(new Error('lecture')); r.readAsDataURL(f); });
+// Fichiers choisis (texte ou archive .zip) → [{ nom, contenu }] ; le contenu est lu tel quel (UTF-8), jamais modifié
+async function lireFichiersProjet(files) {
+  const out = [];
+  for (const f of Array.from(files || [])) {
+    if (f.size > 25 * 1048576) throw { message: '« ' + f.name + ' » est trop volumineux (' + taille(f.size) + ').' };
+    if (/\.zip$/i.test(f.name) || f.type === 'application/zip' || f.type === 'application/x-zip-compressed') (await api('api_projetLireZip', await lireBase64(f))).forEach(x => out.push(x));
+    else out.push({ nom: f.name, contenu: await lireTexte(f) });
+  }
+  return out;
+}
+async function copierTexte(t) { try { await navigator.clipboard.writeText(t); toast('Copié.'); } catch (e) { toast('Copie impossible : sélectionnez le texte et copiez-le.', true); } }
+const lisezProjet = f => f.present ? taille(f.taille) + ' · ' + f.lignes + ' ligne' + (f.lignes > 1 ? 's' : '') + (f.version ? ' · v' + f.version : '') : '';
+
+async function sectionProjet(c) {
+  c.innerHTML = aideBloc('Les 6 fichiers qui composent l\'application, exportés et importés avec leur nom, leur extension et leur contenu exacts. L\'export lit le code réellement en service ; l\'import vérifie tout, demande confirmation et sauvegarde le projet actuel avant de remplacer quoi que ce soit.') + squelette(3);
+  let E;
+  try { E = await api('api_projetEtat'); } catch (x) { c.innerHTML = videEtat('alert', h(messageErreur(x))); return; }
+  if (!document.body.contains(c)) return;
+  const dep = E.deploiement || {}, versionne = E.api.ok && dep.version;
+  const S2 = S.ui.projet = Object.assign({ cible: 'service' }, S.ui.projet || {});
+  const manifeste = '"oauthScopes": [\n' + E.portees_code.map(p => '  "' + p + '"').join(',\n') + '\n]';
+  const etatApi = E.api.ok
+    ? '<div class="indice ok">' + ic('check') + '<span><b>Accès direct au projet Apps Script.</b> Contenu réel et complet des fichiers' + (versionne ? ' — version en service : n° ' + h(dep.version) : dep.head ? ' — l\'application utilise le code enregistré' : '') + '.</span></div>'
+    : '<div class="indice attention">' + ic('alert') + '<span><b>Accès au projet Apps Script indisponible.</b> ' + h(E.api.message) + '<br>Les fichiers HTML restent exportables (lus tels qu\'ils sont en service) ; Code.gs, appsscript.json et l\'import nécessitent cet accès.</span></div>' +
+      '<details class="proj-aide"><summary>Activer l\'accès (une fois, 3 minutes)</summary><ol class="petit"><li>Avec le compte qui exécute l\'application (' + h((S.admin.technique || {}).compte_execution || 'propriétaire du projet') + ') : <a href="https://script.google.com/home/usersettings" target="_blank" rel="noopener">script.google.com/home/usersettings</a> → activer « API Google Apps Script ».</li>' +
+      '<li>Dans l\'éditeur Apps Script : Paramètres du projet → cocher « Afficher le fichier manifeste appsscript.json ».</li><li>Dans appsscript.json, la rubrique "oauthScopes" doit contenir ces portées (ajoutez celles qui manquent ; si la rubrique n\'existe pas, ajoutez-la en entier) :<pre class="proj-code">' + h(manifeste) + '</pre><button type="button" class="btn petit" id="pj-copier-man">' + ic('copy') + 'Copier</button></li>' +
+      '<li>Enregistrer, exécuter une fonction (ex. verifierAdresseOfficielle) pour accepter les autorisations, puis Déployer → Gérer les déploiements → Modifier → Nouvelle version.</li></ol></details>';
+  c.innerHTML = aideBloc('Les 6 fichiers qui composent l\'application, exportés et importés avec leur nom, leur extension et leur contenu exacts. L\'export lit le code réellement en service ; l\'import vérifie tout, demande confirmation et sauvegarde le projet actuel avant de remplacer quoi que ce soit.') + etatApi +
+    carte('Projet complet (6 fichiers)', '<div class="proj-global">' +
+      '<button class="btn principal" id="pj-export-tout"' + (E.api.ok ? '' : ' disabled') + '>' + ic('download') + 'Exporter le projet complet (.zip)</button>' +
+      '<button class="btn" id="pj-import-tout"' + (E.api.ok ? '' : ' disabled') + '>' + ic('upload') + 'Importer un projet complet…</button>' +
+      (versionne && E.fichiers.some(f => f.modifie_editeur) ? '<label class="case-filtre"><select class="champ" id="pj-cible" style="width:auto"><option value="service"' + (S2.cible === 'service' ? ' selected' : '') + '>Version en service (n° ' + h(dep.version) + ')</option><option value="editeur"' + (S2.cible === 'editeur' ? ' selected' : '') + '>Dernière version enregistrée dans l\'éditeur</option></select></label>' : '') +
+      '</div><p class="tres-petit muted" style="margin:10px 0 0">L\'archive contient exactement : ' + FICHIERS_PROJET.map(x => x[0]).join(', ') + '. L\'import accepte cette archive, ou les 6 fichiers choisis ensemble.</p>') +
+    carte('Les 6 fichiers', '<div class="defile-x"><table class="table proj-table"><thead><tr><th>Fichier</th><th>Dans le projet</th><th></th></tr></thead><tbody>' + E.fichiers.map(f => {
+      const d = FICHIERS_PROJET.find(x => x[0] === f.nom) || [f.nom, ''];
+      return '<tr data-pf="' + h(f.nom) + '"><td><b class="proj-nom">' + ic('file') + h(f.nom) + '</b><div class="tres-petit muted">' + h(d[1]) + '</div></td>' +
+        '<td class="petit">' + (f.present ? '<span class="pastille ton-vert">Présent</span> <span class="muted">' + h(lisezProjet(f)) + '</span>' + (f.lecture === 'html' ? '<div class="tres-petit muted">Lu tel qu\'il est en service (HtmlService)</div>' : '') + (f.modifie_editeur ? '<div class="tres-petit" style="color:var(--orange-texte)">Modifié dans l\'éditeur, pas encore publié</div>' : '') : '<span class="pastille ton-' + (E.api.ok ? 'rouge">Absent' : 'gris">Non lisible') + '</span>') + '</td>' +
+        '<td><span class="proj-actions"><button class="btn petit" data-pe="' + h(f.nom) + '"' + (f.present ? '' : ' disabled') + '>' + ic('download') + 'Exporter</button>' +
+        '<button class="btn petit" data-pi="' + h(f.nom) + '"' + (E.api.ok ? '' : ' disabled') + '>' + ic('upload') + 'Importer / remplacer…</button></span></td></tr>';
+    }).join('') + '</tbody></table></div>' +
+      (E.autres.length ? '<p class="tres-petit muted" style="margin:10px 0 0">Autres fichiers du projet (jamais modifiés par un import) : ' + E.autres.map(h).join(', ') + '.</p>' : '')) +
+    carte('Dupliquer pour une autre délégation', '<p class="petit muted" style="margin-top:0">Chaque délégation a sa propre instance : son projet Apps Script, sa base, son Drive, ses utilisateurs. On copie uniquement le code ; la configuration de la nouvelle DT est préparée dans ConfigInitiale.html, sans aucune donnée de ' + h(CFG().identite.code) + '.</p>' +
+      '<ol class="petit etapes-liste" style="margin:0 0 12px"><li>Préparer le projet : code de la nouvelle DT, nom, unités locales, dossier Drive (facultatif).</li><li>Créer un nouveau projet Apps Script avec le compte de la nouvelle DT et y créer les 6 fichiers (mêmes noms), avec le contenu de l\'archive.</li><li>Exécuter installer(), puis Déployer → Nouveau déploiement → Application Web.</li><li>Dans la nouvelle application : Administration → Mise en route.</li></ol>' +
+      '<button class="btn principal" id="pj-dt"' + (E.api.ok ? '' : ' disabled') + '>' + ic('copy') + 'Préparer le projet pour une nouvelle DT…</button>') +
+    '<p class="tres-petit muted">Projet Apps Script : ' + h(E.script_id || '—') + ' · version du code en cours d\'exécution : ' + h(E.version_code) + '.</p>';
+  const cible = () => S2.cible || 'service';
+  if ($('#pj-cible')) $('#pj-cible').onchange = ev => { S2.cible = ev.target.value; };
+  if ($('#pj-copier-man')) $('#pj-copier-man').onclick = () => copierTexte(manifeste);
+  $('#pj-export-tout').onclick = async ev => {
+    occupe(ev.currentTarget, true);
+    try { const z = await api('api_projetExporterTout', cible()); telechargerBlob({ url: URL.createObjectURL(b64Blob(z.data, 'application/zip')), nom: z.nom }); toast('Projet exporté : ' + z.nom + ' (' + z.fichiers.length + ' fichiers).'); }
+    catch (x) { erreur(x); }
+    occupe(ev.currentTarget, false);
+  };
+  c.querySelectorAll('[data-pe]').forEach(b => b.onclick = async ev => {
+    occupe(ev.currentTarget, true);
+    try { const r = await api('api_projetExporter', b.dataset.pe, cible()); telechargerTexte(r.nom, r.contenu, r.mime); toast(r.nom + ' exporté (' + taille(r.taille) + ', ' + r.lignes + ' lignes).'); }
+    catch (x) { erreur(x); }
+    occupe(ev.currentTarget, false);
+  });
+  const apres = () => sectionProjet(c);
+  $('#pj-import-tout').onclick = () => importProjet('complet', E, apres);
+  c.querySelectorAll('[data-pi]').forEach(b => b.onclick = () => importProjet(b.dataset.pi, E, apres));
+  $('#pj-dt').onclick = () => nouvelleDT();
+}
+
+// Import : choix des fichiers → analyse serveur (présents, manquants, contrôles) → confirmation → remplacement → rapport
+function importProjet(mode, E, apres) {
+  const complet = mode === 'complet', dep = E.deploiement || {};
+  let recus = [], A = null, sauvegardeLocale = false, jeton = 0;
+  const md = modale(complet ? 'Importer un projet complet' : 'Importer / remplacer ' + mode,
+    '<p class="petit muted" style="margin-top:0">' + (complet ? 'Choisissez l\'archive .zip exportée, ou les 6 fichiers ensemble (' + FICHIERS_PROJET.map(x => x[0]).join(', ') + '). Vous pouvez en ajouter en plusieurs fois.' : 'Choisissez le fichier ' + h(mode) + '. Les autres fichiers du projet ne sont pas modifiés.') + ' Rien n\'est remplacé avant votre confirmation.</p>' +
+    '<label class="btn"><input type="file" id="pji-fic" accept="' + ACCEPT_PROJET + '"' + (complet ? ' multiple' : '') + ' hidden>' + ic('upload') + (complet ? 'Choisir les fichiers ou l\'archive…' : 'Choisir le fichier…') + '</label>' +
+    '<div id="pji-res" style="margin-top:14px"></div>' +
+    '<div id="pji-conf" hidden><div class="indice info">' + ic('database') + '<span>Avant le remplacement, le projet actuel complet est sauvegardé dans le dossier « Sauvegardes » du Drive. <a href="#" id="pji-svl">Télécharger aussi le projet actuel (.zip)</a></span></div>' +
+    (dep.version ? '<label class="case-filtre" style="margin-top:10px"><input type="checkbox" id="pji-pub" checked> Publier aussitôt sur l\'adresse de l\'application (nouvelle version du déploiement)</label>' : '') +
+    '<label class="case-filtre" id="pji-av-l" style="margin-top:8px" hidden><input type="checkbox" id="pji-av"> J\'ai lu les avertissements et je veux continuer</label>' +
+    '<label class="case-filtre" style="margin-top:8px"><input type="checkbox" id="pji-ok"> Je confirme le remplacement des fichiers indiqués « à remplacer »</label></div>',
+    '<button class="btn" data-fermer>Annuler</button><button class="btn principal" id="pji-go" disabled>' + ic('refresh') + 'Remplacer</button>', true);
+  const etatBouton = () => {
+    const av = A && A.fichiers.some(f => f.avertissements.length && f.statut === 'present' && !f.identique);
+    md.querySelector('#pji-av-l').hidden = !av;
+    md.querySelector('#pji-go').disabled = !A || A.bloquant || A.identique || !md.querySelector('#pji-ok').checked || (av && !md.querySelector('#pji-av').checked);
+  };
+  const dessiner = () => {
+    const z = md.querySelector('#pji-res');
+    if (!A) { z.innerHTML = recus.length ? '<p class="petit muted">' + ic('refresh') + ' Vérification des fichiers…</p>' : ''; md.querySelector('#pji-conf').hidden = true; etatBouton(); return; }
+    const n = A.presents.length, tot = A.fichiers.length;
+    const resume = complet
+      ? (A.complet ? '<div class="indice ' + (A.bloquant ? 'alerte' : 'ok') + '">' + ic(A.bloquant ? 'alert' : 'check') + '<span><b>' + n + ' / ' + tot + ' fichiers présents.</b> ' + (A.bloquant ? 'Des erreurs empêchent l\'import : corrigez les fichiers signalés.' : A.identique ? 'Tous identiques au projet actuel : rien à remplacer.' : 'Contrôles réussis.') + '</span></div>'
+        : '<div class="indice alerte">' + ic('alert') + '<span><b>Import incomplet : ' + n + ' / ' + tot + ' fichiers présents.</b> Manquant' + (A.manquants.length > 1 ? 's' : '') + ' : ' + A.manquants.map(h).join(', ') + '. Ajoutez-' + (A.manquants.length > 1 ? 'les' : 'le') + ' (bouton ci-dessus) ; rien n\'est remplacé tant que les 6 ne sont pas présents.</span></div>')
+      : (A.bloquant ? '<div class="indice alerte">' + ic('alert') + '<span>' + (A.presents.length ? 'Ce fichier ne peut pas être importé : voir les erreurs.' : 'Le fichier choisi n\'est pas reconnu comme ' + h(mode) + '.') + '</span></div>' : A.identique ? '<div class="indice info">' + ic('info') + '<span>Fichier identique au fichier actuel : rien à remplacer.</span></div>' : '');
+    z.innerHTML = resume + (A.api && !A.api.ok ? '<div class="indice attention">' + ic('alert') + '<span>' + h(A.api.message) + '</span></div>' : '') +
+      '<div class="defile-x"><table class="table proj-table"><thead><tr><th>Fichier attendu</th><th>Statut</th><th>Fichier reçu</th><th>Taille (actuel → importé)</th></tr></thead><tbody>' + A.fichiers.map(f => {
+        const st = f.statut === 'manquant' ? '<span class="pastille ton-rouge">Manquant</span>' : f.erreurs.length ? '<span class="pastille ton-rouge">Erreur</span>' : f.identique ? '<span class="pastille ton-gris">Identique</span>' : '<span class="pastille ton-vert">À remplacer</span>';
+        return '<tr><td><b>' + h(f.nom) + '</b></td><td>' + st + '</td><td class="petit">' + (f.nom_recu ? h(f.nom_recu) + (f.reconnu === 'contenu' ? '<div class="tres-petit muted">reconnu d\'après son contenu</div>' : '') : '—') + '</td>' +
+          '<td class="petit">' + (f.statut === 'present' ? (f.actuel ? taille(f.actuel.taille) + (f.actuel.version ? ' (v' + h(f.actuel.version) + ')' : '') : f.actuel === null ? 'absent' : '?') + ' → <b>' + taille(f.taille) + '</b>' + (f.version ? ' (v' + h(f.version) + ')' : '') + ' · ' + f.lignes + ' lignes' : '') + '</td></tr>' +
+          (f.erreurs.length || f.avertissements.length ? '<tr class="proj-ctrl"><td colspan="4">' + f.erreurs.map(e => '<div class="petit" style="color:var(--rouge-fonce)">' + ic('x') + h(e) + '</div>').join('') + f.avertissements.map(e => '<div class="petit" style="color:var(--orange-texte)">' + ic('alert') + h(e) + '</div>').join('') + '</td></tr>' : '');
+      }).join('') + '</tbody></table></div>' +
+      (A.ignores.length ? '<p class="tres-petit muted">Ignorés : ' + A.ignores.map(x => h(x.nom) + ' (' + h(x.raison) + ')').join(' ; ') + '</p>' : '');
+    md.querySelector('#pji-conf').hidden = A.bloquant || A.identique;
+    etatBouton();
+  };
+  const analyser = async () => {
+    const j = ++jeton; A = null; dessiner();
+    try { const r = await api('api_projetAnalyser', recus, mode); if (j !== jeton) return; A = r; }
+    catch (x) { if (j !== jeton) return; erreur(x); }
+    dessiner();
+  };
+  md.querySelector('#pji-fic').onchange = async ev => {
+    const fl = Array.from(ev.target.files || []); ev.target.value = ''; if (!fl.length) return;
+    try {
+      const L = await lireFichiersProjet(fl);
+      if (!complet) recus = L; else L.forEach(x => { const i = recus.findIndex(y => y.nom === x.nom); if (i > -1) recus[i] = x; else recus.push(x); });
+      analyser();
+    } catch (x) { erreur(x); }
+  };
+  md.querySelector('#pji-ok').onchange = etatBouton;
+  md.querySelector('#pji-av').onchange = etatBouton;
+  md.querySelector('#pji-svl').onclick = async ev => {
+    ev.preventDefault();
+    try { const z = await api('api_projetExporterTout', 'editeur'); telechargerBlob({ url: URL.createObjectURL(b64Blob(z.data, 'application/zip')), nom: z.nom.replace(/^Projet_/, 'Projet_avant-import_') }); sauvegardeLocale = true; toast('Projet actuel téléchargé.'); }
+    catch (x) { erreur(x); }
+  };
+  md.querySelector('#pji-go').onclick = async ev => {
+    const aRemplacer = A.fichiers.filter(f => f.statut === 'present' && !f.identique).map(f => f.nom);
+    if (!confirm('Remplacer ' + aRemplacer.join(', ') + ' dans le projet Apps Script ?\nLe projet actuel est sauvegardé avant.')) return;
+    occupe(ev.currentTarget, true);
+    try {
+      const R = await api('api_projetAppliquer', recus, mode, { confirmation: 'REMPLACER', avertissements_acceptes: !!md.querySelector('#pji-av').checked, sauvegarde_locale: sauvegardeLocale, publier: !!(md.querySelector('#pji-pub') && md.querySelector('#pji-pub').checked) });
+      rapportImportProjet(R, apres);
+    } catch (x) { erreur(x); occupe(ev.currentTarget, false); }
+  };
+}
+function rapportImportProjet(R, apres) {
+  const ok = !R.erreurs.length, pub = R.publication;
+  const m = modale(ok ? 'Import terminé' : 'Import terminé avec des erreurs',
+    (R.importes.length ? '<p><b>Fichiers importés et vérifiés (contenu relu identique) :</b></p><ul class="petit">' + R.importes.map(f => '<li>' + ic('check') + ' ' + h(f.nom) + ' — ' + taille(f.taille) + ', ' + f.lignes + ' lignes' + (f.version ? ' (v' + h(f.version) + ')' : '') + '</li>').join('') + '</ul>' : '<p>Aucun fichier remplacé.</p>') +
+    (R.inchanges.length ? '<p class="petit muted">Identiques, non modifiés : ' + R.inchanges.map(h).join(', ') + '.</p>' : '') +
+    (R.erreurs.length ? '<div class="indice alerte">' + ic('alert') + '<span>' + R.erreurs.map(h).join('<br>') + '</span></div>' : '') +
+    (R.autres_conserves.length ? '<p class="petit muted">Autres fichiers du projet conservés : ' + R.autres_conserves.map(h).join(', ') + '.</p>' : '') +
+    (R.sauvegarde ? '<p class="petit">' + ic('database') + ' Projet précédent sauvegardé' + (R.sauvegarde.url ? ' : <a href="' + lien(R.sauvegarde.url) + '" target="_blank" rel="noopener">' + h(R.sauvegarde.nom) + '</a>' : ' (téléchargé sur cet ordinateur)') + '.</p>' : '') +
+    (pub ? '<div class="indice ' + (pub.ok ? 'ok' : 'attention') + '">' + ic(pub.ok ? 'check' : 'alert') + '<span>' + h(pub.message || '') + (pub.ok ? '' : ' Publiez depuis l\'éditeur : Déployer → Gérer les déploiements → Modifier → Nouvelle version.') + '</span></div>'
+      : R.importes.length ? '<div class="indice info">' + ic('info') + '<span>Le code est en place dans le projet. Si l\'application est déployée en version fixe, publiez-la : Déployer → Gérer les déploiements → Modifier → Nouvelle version.</span></div>' : '') +
+    (R.importes.some(f => f.nom === 'appsscript.json') ? '<div class="indice attention">' + ic('alert') + '<span>appsscript.json a changé : si les autorisations ont changé, ouvrez l\'éditeur et exécutez une fonction pour les accepter.</span></div>' : ''),
+    '<button class="btn" data-fermer>Fermer</button>' + (R.importes.length ? '<button class="btn principal" id="pjr-recharger">' + ic('refresh') + 'Recharger l\'application</button>' : ''), true);
+  const b = m.querySelector('#pjr-recharger'); if (b) b.onclick = () => { try { window.top.location.reload(); } catch (e) { location.reload(); } };
+  apres();
+}
+// Préparation d'un projet pour une nouvelle délégation : les 6 fichiers, ConfigInitiale adaptée (aucune donnée de la DT actuelle)
+function nouvelleDT() {
+  const code = CFG().identite.code;
+  const md = modale('Préparer le projet pour une nouvelle délégation',
+    '<p class="petit muted" style="margin-top:0">L\'archive contient les 6 fichiers. Code.gs, Styles.html, App.html, Index.html et appsscript.json sont copiés tels quels ; ConfigInitiale.html est préparée pour la nouvelle DT : identité, adresses e-mail, liens Drive, unités locales et utilisateurs de ' + h(code) + ' ne sont jamais repris.</p>' +
+    '<div class="form-2"><div class="form-ligne"><label for="nd-code">Code de la nouvelle DT <span class="req">*</span></label><input class="champ" id="nd-code" maxlength="12" placeholder="Ex. DT09"><div class="aide">2 à 12 lettres ou chiffres.</div></div>' +
+    '<div class="form-ligne"><label for="nd-nom">Nom du centre</label><input class="champ" id="nd-nom" maxlength="120" placeholder="Ex. Espace Com DT09"></div>' +
+    '<div class="form-ligne"><label for="nd-terr">Territoire</label><input class="champ" id="nd-terr" maxlength="120" placeholder="Ex. Ariège"></div>' +
+    '<div class="form-ligne"><label for="nd-struct">Nom de la structure</label><input class="champ" id="nd-struct" maxlength="160" placeholder="Croix-Rouge française – Délégation territoriale de …"></div></div>' +
+    '<div class="form-ligne"><label for="nd-drive">Dossier du Drive partagé de la nouvelle DT (facultatif)</label><input class="champ" id="nd-drive" maxlength="300" placeholder="https://drive.google.com/drive/folders/…"><div class="aide">Vide : l\'arborescence sera créée à côté de la base de données au premier installer().</div></div>' +
+    '<div class="form-ligne"><label for="nd-ul">Unités locales (une par ligne, facultatif)</label><textarea class="champ" id="nd-ul" style="min-height:90px"></textarea></div>' +
+    '<label class="case-filtre"><input type="checkbox" id="nd-reg"> Reprendre les réglages actuels (apparence, rôles, modèles d\'e-mails, matériel, types de demande…) sans les données de ' + h(code) + '</label>',
+    '<button class="btn" data-fermer>Annuler</button><button class="btn principal" id="nd-ok">' + ic('download') + 'Préparer et télécharger (.zip)</button>', true);
+  md.querySelector('#nd-ok').onclick = async ev => {
+    const v = id => md.querySelector(id).value;
+    if (!/^[A-Za-z0-9_-]{2,12}$/.test(v('#nd-code').trim())) { marquerInvalides(['#nd-code']); return toast('Indiquez le code de la nouvelle délégation (ex. DT09).', true); }
+    occupe(ev.currentTarget, true);
+    try {
+      const r = await api('api_projetNouvelleDT', { code: v('#nd-code').trim(), nom_centre: v('#nd-nom'), territoire: v('#nd-terr'), nom_structure: v('#nd-struct'), drive_racine: v('#nd-drive').trim(), ul: v('#nd-ul'), reglages_actuels: md.querySelector('#nd-reg').checked });
+      telechargerBlob({ url: URL.createObjectURL(b64Blob(r.data, 'application/zip')), nom: r.nom });
+      const m2 = modale('Projet prêt : ' + r.nom,
+        '<ol class="petit etapes-liste"><li>Avec le compte Google de la nouvelle DT : <a href="https://script.new" target="_blank" rel="noopener">script.new</a> (nouveau projet Apps Script).</li>' +
+        '<li>Paramètres du projet → cocher « Afficher le fichier manifeste appsscript.json ».</li>' +
+        '<li>Créer les fichiers avec ces noms exacts et y coller le contenu de l\'archive : Code.gs (remplace le Code.gs vide), appsscript.json, puis les fichiers HTML ConfigInitiale, Styles, App, Index.</li>' +
+        '<li>Relire ConfigInitiale.html (ci-dessous) : identité, dossier Drive, unités locales.</li>' +
+        '<li>Exécuter installer() et accepter les autorisations, puis Déployer → Nouveau déploiement → Application Web.</li>' +
+        '<li>Ouvrir l\'adresse de l\'application → Administration → Mise en route. Les mises à jour suivantes se font depuis Administration → Fichiers du projet.</li></ol>' +
+        (r.mentions.length ? '<div class="indice attention">' + ic('alert') + '<span>Le code « ' + h(r.code_source) + ' » apparaît encore dans : ' + r.mentions.map(x => h(x.nom) + ' (' + x.nb + ')').join(', ') + '. Vérifiez ces mentions dans le nouveau projet.</span></div>' : '') +
+        '<div class="form-ligne"><label>ConfigInitiale.html préparée</label><textarea class="champ" readonly style="min-height:200px;font-family:monospace;font-size:11px" onclick="this.select()">' + h(r.config_initiale) + '</textarea></div>',
+        '<button class="btn" id="nd-copier">' + ic('copy') + 'Copier ConfigInitiale</button><button class="btn principal" data-fermer>Fermer</button>', true);
+      m2.querySelector('#nd-copier').onclick = () => copierTexte(r.config_initiale);
+    } catch (x) { erreur(x); occupe(ev.currentTarget, false); }
+  };
+}
 // ---------- Fiche d'un profil (Administration > Utilisateurs) ----------
 async function ficheUtilisateur(email, apres) {
   const creation = !email;
@@ -6794,4 +7152,4 @@ window.CentreCom = { S: S, go: go, demarrer: demarrer, INACT: INACT, deconnexion
 demarrer();
 })();
 </script>
-<!-- ===== FIN DE App.html — version 3.29.0 — si cette ligne n'apparaît pas tout en bas après collage, la copie est incomplète ===== -->
+<!-- ===== FIN DE App.html — version 3.30.0 — si cette ligne n'apparaît pas tout en bas après collage, la copie est incomplète ===== -->

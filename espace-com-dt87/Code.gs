@@ -20,11 +20,11 @@
  *  Fichiers du projet : Code.gs · ConfigInitiale.html · Index.html ·
  *  Styles.html · App.html · appsscript.json
  *  Documentation : Documentation technique (livrée avec le code).
- *  Version du code : 3.29.0 — octobre 2026 (performance : connexion en un aller-retour, données compactes, copies gardées ; finalisation : diffusion interne, interconnexion, recherche ; Mon Centre Com personnalisable, thème personnel ; fonctions du quotidien : projets, mentions, modèles, actions groupées, calendrier relié, rappels ; optimisation : administration sans accès Drive inutiles, tableau de bord « inchangé », historique lu par blocs ; import des gros fichiers : envoi direct au Drive, causes nommées ; import débloqué ; Mon Centre Com ; photothèque multimédia : photos et vidéos ; audit final, import fiable ; rôles dynamiques, originaux des photos, logo importé, multi-DT ; performance, fiabilité et finition ; tableau de bord de l'administration, gestion des utilisateurs ; fichiers partout, favoris communs, mode utilisateur ; Mon Centre Com : favoris, brouillons, duplication, personnes associées, agenda ; notifications dans l'application et activité récente ; accueil personnalisé ; import de photos par morceaux, en parallèle et en arrière-plan ; matériel et réservations ; adresse Web App unique ; rapidité et fluidité ; photothèque ; aide et FAQ, recherche globale, accueil guidé ; confort d'utilisation : tableau de bord administrateur, listes et filtres, responsive, accessibilité ; site réel uniquement ; prévisualisation des ressources ; configuration progressive ; Drive partagé, profils, ressources)
+ *  Version du code : 3.30.0 — octobre 2026 (fichiers du projet : export / import des 6 fichiers, duplication pour une autre DT ; matériel : galerie de photos, e-mails de réservation au responsable ; performance : connexion en un aller-retour, données compactes, copies gardées ; finalisation : diffusion interne, interconnexion, recherche ; Mon Centre Com personnalisable, thème personnel ; fonctions du quotidien : projets, mentions, modèles, actions groupées, calendrier relié, rappels ; optimisation : administration sans accès Drive inutiles, tableau de bord « inchangé », historique lu par blocs ; import des gros fichiers : envoi direct au Drive, causes nommées ; import débloqué ; Mon Centre Com ; photothèque multimédia : photos et vidéos ; audit final, import fiable ; rôles dynamiques, originaux des photos, logo importé, multi-DT ; performance, fiabilité et finition ; tableau de bord de l'administration, gestion des utilisateurs ; fichiers partout, favoris communs, mode utilisateur ; Mon Centre Com : favoris, brouillons, duplication, personnes associées, agenda ; notifications dans l'application et activité récente ; accueil personnalisé ; import de photos par morceaux, en parallèle et en arrière-plan ; matériel et réservations ; adresse Web App unique ; rapidité et fluidité ; photothèque ; aide et FAQ, recherche globale, accueil guidé ; confort d'utilisation : tableau de bord administrateur, listes et filtres, responsive, accessibilité ; site réel uniquement ; prévisualisation des ressources ; configuration progressive ; Drive partagé, profils, ressources)
  * =====================================================================
  */
 
-const VERSION_CODE = '3.29.0';   // doit être IDENTIQUE à VERSION_APP dans App.html (contrôlé au démarrage)
+const VERSION_CODE = '3.30.0';   // doit être IDENTIQUE à VERSION_APP dans App.html (contrôlé au démarrage)
 const VERSION_SCHEMA = 4;          // format de la configuration (export/import) ; 1 = version 2.x, 3 = version 3.3, importables
 const FORMAT_EXPORT = 'centre-com-configuration';
 
@@ -58,6 +58,8 @@ const TABLES = {
   // validation '' (réglage général) | auto | admin ; responsable : e-mail d'un utilisateur
   materiel: { onglet: 'Matériel', cols: ['id', 'nom', 'categorie', 'description', 'reference', 'localisation', 'responsable', 'etat', 'conditions', 'maintenance', 'maintenance_date', 'actif', 'archive', 'validation', 'ordre', 'cree_le', 'cree_par', 'maj_le', 'maj_par'] },
   materiel_photos: { onglet: 'Photos du matériel', cols: ['id', 'mini'] },
+  // Galerie (3.30) : nombre libre de photos par matériel ; ordre 0 = photo principale ; p1…p4 = grande image découpée (limite d'une cellule)
+  materiel_galerie: { onglet: 'Galerie du matériel', cols: ['pid', 'materiel_id', 'ordre', 'mini', 'p1', 'p2', 'p3', 'p4', 'largeur', 'hauteur', 'ajoute_le', 'ajoute_par'] },
   // Réservations : statut attente | confirmee | refusee | annulee (« terminée » = confirmée dont la fin est passée) ;
   // debut / fin : AAAA-MM-JJTHH:MM (heure de Paris), fin exclue ; journee OUI = journée(s) entière(s) ; suivi : une ligne par action
   reservations: { onglet: 'Réservations', cols: ['id', 'materiel_id', 'email', 'nom', 'debut', 'fin', 'journee', 'lieu', 'commentaire', 'statut', 'cree_le', 'maj_le', 'decide_par', 'motif', 'suivi'] },
@@ -3243,7 +3245,7 @@ function assurerOnglet_(table) {
   sh.setFrozenRows(1);
   delete DB._cache[table]; DB.change_(table);   // onglet recréé : aucune copie en cache de l'ancien contenu
 }
-const ONGLETS_A_LA_VOLEE = ['phototheque', 'photo_vignettes', 'albums', 'photo_favoris', 'faq', 'materiel', 'materiel_photos', 'reservations', 'notifications', 'pieces'];
+const ONGLETS_A_LA_VOLEE = ['phototheque', 'photo_vignettes', 'albums', 'photo_favoris', 'faq', 'materiel', 'materiel_photos', 'materiel_galerie', 'reservations', 'notifications', 'pieces'];
 // Colonnes ajoutées par une mise à jour (ex. « genre », « duree » en 3.21) : créées à droite, en-têtes compris, sans toucher aux données
 function assurerColonnes_(table) {
   const sh = DB.feuille(table), cols = TABLES[table].cols, n = sh.getLastColumn();
@@ -5552,7 +5554,7 @@ const RESA_BLOQUANTS = ['attente', 'confirmee'];                       // une de
 const MOTIF_DATE_HEURE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 const MOTIF_JOUR = /^\d{4}-\d{2}-\d{2}$/;
 
-function ongletsMateriel_() { const c = CacheService.getScriptCache(); if (c.get('onglets_materiel')) return; ['materiel', 'materiel_photos', 'reservations'].forEach(assurerOnglet_); try { c.put('onglets_materiel', '1', 21600); } catch (e) { } }
+function ongletsMateriel_() { const c = CacheService.getScriptCache(); if (c.get('onglets_materiel')) return; ['materiel', 'materiel_photos', 'materiel_galerie', 'reservations'].forEach(assurerOnglet_); try { c.put('onglets_materiel', '1', 21600); } catch (e) { } }
 function materielLignes_() { ongletsMateriel_(); return DB.tout('materiel'); }
 function reservationsLignes_() { ongletsMateriel_(); return DB.tout('reservations'); }
 function photosMateriel_() { ongletsMateriel_(); const o = {}; DB.tout('materiel_photos').forEach(p => { if (p.mini) o[p.id] = p.mini; }); return o; }
@@ -5600,11 +5602,12 @@ function periode_(p, u) {
 function conflits_(materielId, debut, fin, saufId, L) {
   return (L || reservationsLignes_()).filter(r => r.materiel_id === materielId && r.id !== saufId && RESA_BLOQUANTS.indexOf(r.statut) > -1 && chevauche_(debut, fin, r.debut, r.fin));
 }
-function materielPublic_(m, u, photos, occupe) {
+function materielPublic_(m, u, photos, occupe, nbPhotos) {
   const gere = peut_(u, 'materiel_gerer');
   const o = { id: m.id, nom: m.nom, categorie: m.categorie, description: m.description, reference: m.reference, localisation: m.localisation, responsable_nom: m.responsable ? nomDe_(m.responsable) : '',
     etat: MATERIEL_ETATS.indexOf(m.etat) > -1 ? m.etat : 'disponible', conditions: m.conditions, maintenance: m.maintenance, maintenance_date: m.maintenance_date, actif: m.actif !== 'NON', archive: m.archive === 'OUI',
     validation: m.validation || '', photo: (photos || {})[m.id] || '', reserve_maintenant: !!occupe, ordre: Number(m.ordre) || 0 };
+  o.nb_photos = nbPhotos != null ? nbPhotos : o.photo ? 1 : 0;   // 3.30 : nombre de photos de la galerie
   o.etat_affiche = !o.actif || o.archive ? 'inactif' : o.etat === 'disponible' && occupe ? 'reserve' : o.etat;
   if (gere) { o.responsable = m.responsable; o.maj_le = m.maj_le; }
   Object.keys(o).forEach(k => { if (o[k] === '' || o[k] === undefined) delete o[k]; });
@@ -5631,9 +5634,10 @@ function ajouterSuivi_(r, u, action) { return (String(r.suivi || '') + '\n' + li
 function destinatairesMateriel_(m) {
   const c = config_();
   const liste = String(c.materiel.emails_gestion || '').split(/[,;\s]+/).map(s => s.trim().toLowerCase()).filter(s => s.indexOf('@') > 0);
-  if (liste.length) return liste;
+  // 3.30 : le responsable du matériel est prévenu EN PLUS des adresses de gestion réglées dans l'administration
   const resp = m && m.responsable ? DB.trouver('utilisateurs', 'email', m.responsable) : null;
-  if (resp && etatAcces_(resp) === 'ok') return [resp.email];
+  const ok = liste.concat(resp && etatAcces_(resp) === 'ok' ? [resp.email] : []);
+  if (ok.length) return Array.from(new Set(ok));
   return DB.tout('utilisateurs').filter(x => { const r = role_(x.role); return etatAcces_(x) === 'ok' && (r === 'admin' || ((c.roles[r] || {}).permissions || []).indexOf('reservations_gerer') > -1); }).map(x => x.email);
 }
 function notifierResa_(modele, dests, r, m, auteur, motif) {
@@ -5652,7 +5656,11 @@ function notifierResa_(modele, dests, r, m, auteur, motif) {
   if (!config_().materiel.notifier) return 0;
   const st = { attente: 'en attente de validation', confirmee: 'confirmée', refusee: 'refusée', annulee: 'annulée', terminee: 'terminée' }[statutEffectif_(r)] || r.statut;
   const v = { prenom: prenom_(r.nom), demandeur: r.nom || r.email, materiel: m ? m.nom : '', periode: periodeTexte_(r), lieu: r.lieu || '', statut: st, auteur: auteur ? (auteur.nom || auteur.email) : '', motif: motif || '' };
-  const extra = tableau_([['Matériel', v.materiel], ['Période', v.periode], ['Lieu / utilisation', v.lieu || '—'], ['Statut', st]]) + (motif ? citation_(motif) : '') + (r.commentaire && modele === 'resa_nouvelle' ? citation_(r.commentaire) : '');
+  const lignes = [['Matériel', v.materiel + (m && m.reference ? ' (réf. ' + m.reference + ')' : '')], ['Période', v.periode], ['Lieu / utilisation', v.lieu || '—'], ['Statut', st]];
+  if (modele === 'resa_nouvelle') lignes.splice(1, 0, ['Demandeur', (r.nom || r.email) + (r.nom && r.email && r.nom !== r.email ? ' — ' + r.email : '')]);
+  if (m && m.localisation) lignes.push(['Localisation du matériel', m.localisation]);
+  lignes.push(['N° de réservation', r.id]);
+  const extra = tableau_(lignes) + (motif ? citation_(motif) : '') + (r.commentaire && modele === 'resa_nouvelle' ? citation_(r.commentaire) : '');
   let n = 0;
   Array.from(new Set(dests.filter(Boolean))).filter(d => !auteur || d !== auteur.email || modele !== 'resa_nouvelle').forEach(d => { if (mailModele_(d, modele, v, extra + bouton_('Ouvrir le matériel et les réservations', urlOfficielle_() + '?v=materiel'))) n++; });
   return n;
@@ -5663,8 +5671,9 @@ function api_materiel(sid) {
   return appel_(sid, 'materiel_voir', u => {
     const now = minuteActuelle_(), occ = {};
     reservationsLignes_().forEach(r => { if (r.statut === 'confirmee' && r.debut <= now && r.fin > now) occ[r.materiel_id] = true; });
-    const ph = photosMateriel_(), c = config_().materiel;
-    const items = materielLignes_().filter(m => visibleMateriel_(m, u)).map(m => materielPublic_(m, u, ph, occ[m.id]))
+    const ph = photosMateriel_(), c = config_().materiel, nb = {};
+    try { ongletsMateriel_(); DB.colonne('materiel_galerie', 'materiel_id').forEach(x => { if (x) nb[x] = (nb[x] || 0) + 1; }); } catch (e) { console.error('Galerie du matériel : ' + e); }
+    const items = materielLignes_().filter(m => visibleMateriel_(m, u)).map(m => materielPublic_(m, u, ph, occ[m.id], nb[m.id] || (ph[m.id] ? 1 : 0)))
       .sort((a, b) => (a.ordre - b.ordre) || String(a.nom).localeCompare(String(b.nom), 'fr'));
     return { items: items, categories: c.categories, validation: c.validation, duree_max_jours: c.duree_max_jours, anticipation_max_jours: c.anticipation_max_jours, annulation: c.annulation, conditions: c.conditions, droits: droitsMateriel_(u) };
   });
@@ -5875,7 +5884,7 @@ function api_enregistrerMateriel(sid, x) {
         id = 'M-' + Utilities.getUuid().replace(/-/g, '').slice(0, 10);
         DB.ajouter('materiel', Object.assign({ id: id, actif: 'OUI', archive: '', cree_le: maintenant_(), cree_par: u.email }, o));
       }
-      if (photo !== undefined) {
+      if (photo !== undefined && !galIndex_(id).lignes.length) {   // ancienne photo unique (la galerie, si elle existe, décide de la photo principale)
         const ex = DB.tout('materiel_photos').find(p => p.id === id);
         if (photo && ex) DB.modifier('materiel_photos', 'id', id, { mini: photo });
         else if (photo) DB.ajouter('materiel_photos', { id: id, mini: photo });
@@ -5884,7 +5893,7 @@ function api_enregistrerMateriel(sid, x) {
     } finally { liberer_(lock); }
     journalSecu_(u.email, x.id ? 'materiel_modifie' : 'materiel_cree', id + ' · ' + o.nom);
     const m = materielLignes_().find(z => z.id === id);
-    return { materiel: materielPublic_(m, u, photosMateriel_(), false), reservations_a_revoir: alerte };
+    return { materiel: materielPublic_(m, u, photosMateriel_(), false, nbPhotosMat_(m.id)), reservations_a_revoir: alerte };
   });
 }
 // Désactiver / réactiver / archiver / désarchiver. Les réservations à venir sont annulées (et les personnes prévenues)
@@ -5910,7 +5919,152 @@ function api_etatMateriel(sid, id, action, confirmation) {
     journalSecu_(u.email, 'materiel_' + action, m.id + ' · ' + m.nom + (annulees.length ? ' · ' + annulees.length + ' réservation(s) annulée(s)' : ''));
     annulees.forEach(r => { try { notifierResa_('resa_annulee', [r.email], r, m, u, 'Le matériel a été retiré du catalogue.'); } catch (e) { } });
     const n = materielLignes_().find(z => z.id === m.id);
-    return { materiel: materielPublic_(n, u, photosMateriel_(), false), annulees: annulees.length };
+    return { materiel: materielPublic_(n, u, photosMateriel_(), false, nbPhotosMat_(n.id)), annulees: annulees.length };
+  });
+}
+
+// ---------- Galerie de photos du matériel (3.30) : nombre libre de photos, ordre, photo principale ----------
+// Onglet « Galerie du matériel » : une ligne par photo — vignette (≤ 320 px) et grande image découpée en morceaux de
+// 48 000 caractères (limite d'une cellule). La PREMIÈRE photo est la photo principale ; sa vignette est recopiée dans
+// « Photos du matériel » : le catalogue reste aussi léger qu'avant. Un matériel sans galerie garde son ancienne photo,
+// reprise dans la galerie à la première modification. Lecture ciblée : seules les lignes du matériel, et les morceaux
+// de la grande image uniquement à l'affichage en grand.
+const GAL_MORCEAU = 48000, GAL_MORCEAUX = 4;
+const GAL_COLS_LEGERES = [['pid', 'materiel_id', 'ordre', 'mini'], ['largeur', 'hauteur', 'ajoute_le', 'ajoute_par']];
+function galIndex_(mid) {
+  ongletsMateriel_();
+  const sh = DB.feuille('materiel_galerie'), n = sh.getLastRow() - 1, j = TABLES.materiel_galerie.cols.indexOf('materiel_id') + 1, L = [];
+  if (n < 1 || !mid) return { sh: sh, lignes: L };
+  const col = sh.getRange(2, j, n, 1).getDisplayValues();
+  for (let i = 0; i < n; i++) if (col[i][0] === mid) L.push(i + 2);
+  return { sh: sh, lignes: L };
+}
+function galerieLignes_(mid) {
+  const X = galIndex_(mid), cols = TABLES.materiel_galerie.cols;
+  if (!X.lignes.length) return [];
+  const a = X.lignes[0], nb = X.lignes[X.lignes.length - 1] - a + 1;
+  const blocs = GAL_COLS_LEGERES.map(g => ({ g: g, v: X.sh.getRange(a, cols.indexOf(g[0]) + 1, nb, g.length).getDisplayValues() }));
+  return X.lignes.map(r => { const o = { _ligne: r }; blocs.forEach(b => b.g.forEach((k, i) => o[k] = b.v[r - a][i])); return o; })
+    .sort((x, y) => (Number(x.ordre) || 0) - (Number(y.ordre) || 0) || String(x.ajoute_le).localeCompare(String(y.ajoute_le)));
+}
+// Nombre de photos d'un matériel (galerie, sinon ancienne photo unique)
+function nbPhotosMat_(mid) { try { return galIndex_(mid).lignes.length || (photosMateriel_()[mid] ? 1 : 0); } catch (e) { return photosMateriel_()[mid] ? 1 : 0; } }
+const galPublique_ = p => ({ pid: p.pid, mini: p.mini, l: Number(p.largeur) || 0, h: Number(p.hauteur) || 0 });
+function galerie_(mid) {
+  const L = galerieLignes_(mid);
+  if (L.length) return L.map(galPublique_);
+  const anc = DB.tout('materiel_photos').find(p => p.id === mid);
+  return anc && anc.mini ? [{ pid: 'ancienne', mini: anc.mini, l: 0, h: 0 }] : [];
+}
+// Vignette de la photo principale (première) recopiée pour le catalogue ; aucune photo : vignette retirée
+function synchroPrincipale_(mid) {
+  const L = galerieLignes_(mid), mini = L.length ? L[0].mini : '';
+  const ex = DB.tout('materiel_photos').find(p => p.id === mid);
+  if (mini && ex) { if (ex.mini !== mini) DB.modifier('materiel_photos', 'id', mid, { mini: mini }); }
+  else if (mini) DB.ajouter('materiel_photos', { id: mid, mini: mini });
+  else if (ex) DB.supprimer('materiel_photos', 'id', mid);
+}
+const nouveauPid_ = () => 'P-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12);
+// Ancienne photo unique (avant 3.30) reprise comme première photo de la galerie (rien n'est perdu)
+function migrerAncienne_(mid, u) {
+  if (galIndex_(mid).lignes.length) return '';
+  const anc = DB.tout('materiel_photos').find(p => p.id === mid);
+  if (!anc || !anc.mini) return '';
+  const pid = nouveauPid_();
+  DB.ajouter('materiel_galerie', { pid: pid, materiel_id: mid, ordre: 0, mini: anc.mini, ajoute_le: maintenant_(), ajoute_par: u.email });
+  return pid;
+}
+function imageDataUrl_(s, max) {
+  s = String(s || '');
+  const m = s.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!m || s.length > max || !typeImage_(decoder64_(m[2]))) throw Oups_('Photo invalide : choisissez une image JPG, PNG ou WEBP.');
+  return s;
+}
+function reponseGalerie_(mid, u) {
+  const m = materielLignes_().find(x => x.id === mid), ph = galerie_(mid);
+  return { photos: ph, materiel: m ? materielPublic_(m, u, photosMateriel_(), false, ph.length) : null };
+}
+function materielGere_(id) { const m = materielLignes_().find(x => x.id === String(id || '')); if (!m) throw Oups_('Ce matériel n\'existe plus.'); return m; }
+
+// Lecture : vignettes de toutes les photos (ordre, principale en premier), puis une grande image à la demande
+function api_photosMateriel(sid, id) {
+  return appel_(sid, 'materiel_voir', u => {
+    const m = materielLignes_().find(x => x.id === String(id || ''));
+    if (!visibleMateriel_(m, u)) throw Oups_('Ce matériel n\'existe pas ou ne vous est pas accessible.');
+    return { photos: galerie_(m.id) };
+  });
+}
+function api_photoMateriel(sid, id, pid) {
+  return appel_(sid, 'materiel_voir', u => {
+    const m = materielLignes_().find(x => x.id === String(id || ''));
+    if (!visibleMateriel_(m, u)) throw Oups_('Ce matériel n\'existe pas ou ne vous est pas accessible.');
+    pid = String(pid || '');
+    if (pid === 'ancienne') { const anc = DB.tout('materiel_photos').find(p => p.id === m.id); return { pid: pid, grande: anc ? anc.mini : '' }; }
+    const p = galerieLignes_(m.id).find(x => x.pid === pid);
+    if (!p) throw Oups_('Cette photo n\'existe plus.');
+    const cols = TABLES.materiel_galerie.cols, g = DB.feuille('materiel_galerie').getRange(p._ligne, cols.indexOf('p1') + 1, 1, GAL_MORCEAUX).getDisplayValues()[0].join('');
+    return { pid: pid, grande: g || p.mini };
+  });
+}
+// Ajout d'une photo (en dernière position ; la première ajoutée devient la principale)
+function api_ajouterPhotoMateriel(sid, id, ph) {
+  return appel_(sid, 'materiel_gerer', u => {
+    ph = ph || {};
+    const mini = imageDataUrl_(ph.mini, 49000), grande = ph.grande ? imageDataUrl_(ph.grande, GAL_MORCEAU * GAL_MORCEAUX) : '';
+    let m;
+    const lock = verrouMateriel_();
+    try {
+      DB.relire();
+      m = materielGere_(id);
+      migrerAncienne_(m.id, u);
+      const L = galerieLignes_(m.id);
+      const o = { pid: nouveauPid_(), materiel_id: m.id, ordre: L.length ? Math.max.apply(null, L.map(p => Number(p.ordre) || 0)) + 1 : 0, mini: mini,
+        largeur: Math.max(0, Math.round(Number(ph.l) || 0)) || '', hauteur: Math.max(0, Math.round(Number(ph.h) || 0)) || '', ajoute_le: maintenant_(), ajoute_par: u.email };
+      for (let i = 0; i < GAL_MORCEAUX; i++) o['p' + (i + 1)] = grande.slice(i * GAL_MORCEAU, (i + 1) * GAL_MORCEAU);
+      DB.ajouter('materiel_galerie', o);
+      if (!L.length) synchroPrincipale_(m.id);
+    } finally { liberer_(lock); }
+    journalSecu_(u.email, 'materiel_photos', m.id + ' · ' + m.nom + ' · photo ajoutée');
+    return reponseGalerie_(m.id, u);
+  });
+}
+// Nouvel ordre (liste complète des photos) : la première devient la photo principale
+function api_organiserPhotosMateriel(sid, id, pids) {
+  return appel_(sid, 'materiel_gerer', u => {
+    let m;
+    const lock = verrouMateriel_();
+    try {
+      DB.relire();
+      m = materielGere_(id);
+      const anc = migrerAncienne_(m.id, u);
+      pids = (Array.isArray(pids) ? pids : []).map(p => String(p) === 'ancienne' && anc ? anc : String(p));
+      const L = galerieLignes_(m.id);
+      if (pids.length !== L.length || new Set(pids).size !== pids.length || L.some(p => pids.indexOf(p.pid) < 0)) throw Oups_('Les photos ont été modifiées entre-temps : la galerie a été rechargée, recommencez.');
+      const sh = DB.feuille('materiel_galerie'), jo = TABLES.materiel_galerie.cols.indexOf('ordre') + 1;
+      L.forEach(p => { const k = String(pids.indexOf(p.pid)); if (k !== String(p.ordre)) sh.getRange(p._ligne, jo).setNumberFormat('@').setValue(k); });
+      synchroPrincipale_(m.id);
+    } finally { liberer_(lock); }
+    return reponseGalerie_(m.id, u);
+  });
+}
+function api_supprimerPhotoMateriel(sid, id, pid) {
+  return appel_(sid, 'materiel_gerer', u => {
+    let m;
+    pid = String(pid || '');
+    const lock = verrouMateriel_();
+    try {
+      DB.relire();
+      m = materielGere_(id);
+      if (pid === 'ancienne') { if (!galIndex_(m.id).lignes.length && DB.tout('materiel_photos').some(p => p.id === m.id)) DB.supprimer('materiel_photos', 'id', m.id); }
+      else {
+        const p = galerieLignes_(m.id).find(x => x.pid === pid);
+        if (!p) throw Oups_('Cette photo a déjà été supprimée.');
+        DB.feuille('materiel_galerie').deleteRow(p._ligne);
+        synchroPrincipale_(m.id);
+      }
+    } finally { liberer_(lock); }
+    journalSecu_(u.email, 'materiel_photos', m.id + ' · ' + m.nom + ' · photo supprimée');
+    return reponseGalerie_(m.id, u);
   });
 }
 
@@ -6327,4 +6481,382 @@ function planifierDiffusions_() {
   } catch (e) { console.error('Déclencheur des diffusions : ' + e); }
 }
 
-// ===== FIN DE Code.gs — version 3.29.0 — si cette ligne n'apparaît pas tout en bas après collage, la copie est incomplète =====
+// =====================================================================
+// 27. FICHIERS DU PROJET (3.30) : export / import des 6 fichiers, duplication pour une autre délégation
+// Le CONTENU RÉEL du projet Apps Script est lu et écrit par l'API Apps Script (projects.getContent / updateContent),
+// avec le jeton du compte qui exécute l'application. Rien n'est remplacé avant : vérification complète des fichiers
+// reçus, confirmation explicite, sauvegarde du projet actuel. Après écriture, le contenu est relu et comparé octet par octet.
+// Chaque délégation reste une instance indépendante : sa base, son Drive, ses Propriétés ; seul le code est copié.
+// Prérequis (une fois, avec le compte qui exécute l'application) :
+//   • https://script.google.com/home/usersettings → « API Google Apps Script » activée ;
+//   • appsscript.json → "oauthScopes" contient PROJET_PORTEES (voir Administration > Fichiers du projet).
+// =====================================================================
+const PROJET_FICHIERS = [
+  { nom: 'Code.gs', api: 'Code', type: 'SERVER_JS', mime: 'text/plain' },
+  { nom: 'appsscript.json', api: 'appsscript', type: 'JSON', mime: 'application/json' },
+  { nom: 'ConfigInitiale.html', api: 'ConfigInitiale', type: 'HTML', mime: 'text/html' },
+  { nom: 'Styles.html', api: 'Styles', type: 'HTML', mime: 'text/html' },
+  { nom: 'App.html', api: 'App', type: 'HTML', mime: 'text/html' },
+  { nom: 'Index.html', api: 'Index', type: 'HTML', mime: 'text/html' },
+];
+const PROJET_PORTEES = ['https://www.googleapis.com/auth/script.projects', 'https://www.googleapis.com/auth/script.deployments'];
+// Portées utilisées par le code (manifeste conseillé quand "oauthScopes" est explicite)
+const PROJET_PORTEES_CODE = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/script.external_request',
+  'https://www.googleapis.com/auth/script.send_mail', 'https://www.googleapis.com/auth/script.scriptapp', 'https://www.googleapis.com/auth/userinfo.email'].concat(PROJET_PORTEES);
+const PROJET_TAILLE_MAX = 6000000;   // caractères par fichier (Code.gs ≈ 0,5 Mo, App.html ≈ 0,8 Mo)
+const defProjet_ = nom => PROJET_FICHIERS.find(d => d.nom === nom) || null;
+
+// ---------- API Apps Script ----------
+function projetApi_(methode, chemin, corps) {
+  const o = { method: methode, headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+  if (corps !== undefined) { o.contentType = 'application/json'; o.payload = JSON.stringify(corps); }
+  let r;
+  try { r = UrlFetchApp.fetch('https://script.googleapis.com/v1/' + chemin, o); }
+  catch (e) { throw Oups_('API Apps Script injoignable : ' + String(e && e.message || e).slice(0, 200)); }
+  const code = r.getResponseCode(), txt = r.getContentText();
+  if (code >= 200 && code < 300) { try { return txt ? JSON.parse(txt) : {}; } catch (e) { return {}; } }
+  throw Oups_(causeApiProjet_(code, txt));
+}
+function causeApiProjet_(code, txt) {
+  let m = ''; try { m = String((JSON.parse(txt).error || {}).message || ''); } catch (e) { m = String(txt || '').slice(0, 200); }
+  if (/has not (been )?(used|enabled)|is disabled|not enabled|usersettings/i.test(m)) return 'L\'API Apps Script n\'est pas activée pour le compte qui exécute l\'application. Avec ce compte : https://script.google.com/home/usersettings → activer « API Google Apps Script », puis réessayer (quelques minutes peuvent être nécessaires).';
+  if (code === 403 && /scope|insufficient/i.test(m)) return 'Autorisation manquante : ajoutez dans appsscript.json, rubrique "oauthScopes", les portées ' + PROJET_PORTEES.join(' et ') + ', enregistrez, exécutez une fonction depuis l\'éditeur pour autoriser, puis publiez une nouvelle version.';
+  if (code === 401) return 'Jeton refusé par l\'API Apps Script (401). Rechargez la page ; si le problème persiste, autorisez à nouveau le projet depuis l\'éditeur.';
+  if (code === 403 || code === 404) return 'Le compte qui exécute l\'application n\'a pas accès en modification à ce projet Apps Script (' + code + (m ? ' : ' + m : '') + ').';
+  return 'L\'API Apps Script a répondu ' + code + (m ? ' : ' + m : '') + '.';
+}
+// Déploiement qui sert l'adresse officielle : version figée (n°) ou code enregistré (HEAD, /dev)
+function deploiementActuel_() {
+  const m = String(urlOfficielle_() || '').match(/\/s\/([A-Za-z0-9_-]+)\/(exec|dev)$/);
+  if (!m) return { id: '', head: true, version: null };
+  if (m[2] === 'dev') return { id: m[1], head: true, version: null };
+  try { const d = projetApi_('get', 'projects/' + ScriptApp.getScriptId() + '/deployments/' + m[1]); const v = Number((d.deploymentConfig || {}).versionNumber) || null; return { id: m[1], head: !v, version: v }; }
+  catch (e) { return { id: m[1], head: null, version: null, erreur: e.message }; }
+}
+// Contenu complet du projet : version en service (par défaut) ou dernière version enregistrée dans l'éditeur
+function contenuProjet_(cible) {
+  let v = null, dep = null;
+  if (cible !== 'editeur') { dep = deploiementActuel_(); v = dep.version; }
+  const r = projetApi_('get', 'projects/' + ScriptApp.getScriptId() + '/content' + (v ? '?versionNumber=' + v : ''));
+  return { files: (r.files || []).map(f => ({ name: String(f.name || ''), type: String(f.type || ''), source: String(f.source || '') })), version: v, deploiement: dep };
+}
+// Les 6 fichiers attendus dans la liste du projet (un seul fichier .gs, quel que soit son nom, est reconnu comme Code.gs)
+function fichiersAttendus_(files) {
+  const out = {}, serveurs = files.filter(f => f.type === 'SERVER_JS');
+  PROJET_FICHIERS.forEach(d => {
+    let f = files.find(x => x.type === d.type && x.name === d.api) || files.find(x => x.type === d.type && x.name.toLowerCase() === d.api.toLowerCase());
+    if (!f && d.type === 'SERVER_JS' && serveurs.length === 1) f = serveurs[0];
+    out[d.nom] = f || null;
+  });
+  return out;
+}
+const lignesTexte_ = s => s ? String(s).split('\n').length : 0;
+function versionFichier_(nom, s) {
+  s = String(s || '');
+  if (nom === 'Code.gs') return (s.match(/const VERSION_CODE = '([^']+)'/) || [])[1] || '';
+  if (nom === 'App.html') return (s.match(/const VERSION_APP = '([^']+)'/) || [])[1] || '';
+  if (nom === 'Styles.html') return (s.match(/FIN DE Styles\.html — version ([0-9][\w.-]*)/) || [])[1] || '';
+  return '';
+}
+// Sans l'API : les fichiers HTML restent lisibles tels qu'ils sont en service (HtmlService) ; Code.gs et appsscript.json non
+function lectureHtmlService_(d) { if (d.type !== 'HTML') return null; try { return HtmlService.createHtmlOutputFromFile(d.api).getContent(); } catch (e) { return null; } }
+
+// ---------- Reconnaissance et contrôle des fichiers reçus ----------
+// « Code.gs », « Code.gs.txt », « App (1).html », « 18dc682f-Code.gs-4.txt »… → nom attendu ; sinon d'après le contenu
+function reconnaitreNomProjet_(nom) {
+  let n = String(nom || '').split(/[\\/]/).pop().trim().toLowerCase();
+  n = n.replace(/\.txt$/, '').replace(/\s*\(\d+\)/g, '');
+  const exact = PROJET_FICHIERS.find(d => d.nom.toLowerCase() === n); if (exact) return exact.nom;
+  const t = PROJET_FICHIERS.filter(d => new RegExp('(^|[^a-z0-9])' + d.nom.toLowerCase().replace(/\./g, '\\.') + '([^a-z0-9]|$)').test(n));
+  return t.length === 1 ? t[0].nom : '';
+}
+function devinerContenuProjet_(s) {
+  s = String(s || '');
+  if (/const VERSION_CODE = '/.test(s) && /function doGet\s*\(/.test(s)) return 'Code.gs';
+  if (/const VERSION_APP = '/.test(s)) return 'App.html';
+  if (/FIN DE Styles\.html/.test(s) || /^\s*<style[\s>]/i.test(s)) return 'Styles.html';
+  if (/include\(\s*['"]App['"]\s*\)/.test(s)) return 'Index.html';
+  let o = null; try { o = JSON.parse(s); } catch (e) { }
+  if (o && typeof o === 'object' && !Array.isArray(o)) {
+    if (o.timeZone || o.runtimeVersion || o.webapp || o.oauthScopes || o.exceptionLogging || o.dependencies) return 'appsscript.json';
+    if (o.config || o.tables) return 'ConfigInitiale.html';
+  }
+  return '';
+}
+function syntaxeJs_(src) {
+  try { new Function(src); return ''; }   // compilation seulement : rien n'est exécuté
+  catch (e) { if (e instanceof SyntaxError) return e.message; return ''; }   // compilation dynamique indisponible : contrôle ignoré
+}
+// Contrôle d'un fichier : erreurs (bloquantes) et avertissements
+function verifierFichierProjet_(nom, s) {
+  const E = [], A = [];
+  s = String(s == null ? '' : s);
+  if (!s.trim()) E.push('Fichier vide.');
+  if (s.length > PROJET_TAILLE_MAX) E.push('Fichier trop volumineux (' + s.length + ' caractères).');
+  if (s.indexOf('\u0000') > -1 || s.indexOf('\uFFFD') > -1) E.push('Contenu binaire ou mal encodé (le fichier doit être enregistré en UTF-8).');
+  if (E.length) return { erreurs: E, avertissements: A };
+  const devine = devinerContenuProjet_(s);
+  if (devine && devine !== nom) E.push('Le contenu ressemble à ' + devine + ', pas à ' + nom + ' : fichiers inversés ?');
+  if (nom === 'Code.gs') {
+    if (/^\s*</.test(s)) E.push('Ce fichier contient du HTML, pas du code Apps Script.');
+    if (!/function doGet\s*\(/.test(s)) E.push('Fonction doGet absente : ce n\'est pas le Code.gs du Centre Com.');
+    const v = versionFichier_(nom, s), fin = (s.match(/FIN DE Code\.gs — version ([0-9][\w.-]*)/) || [])[1];
+    if (!v) E.push('VERSION_CODE absente.');
+    if (!fin) E.push('Ligne de fin « FIN DE Code.gs » absente : copie incomplète.'); else if (v && fin !== v) E.push('Ligne de fin (version ' + fin + ') différente de VERSION_CODE (' + v + ') : fichier incohérent.');
+    const sx = syntaxeJs_(s); if (sx) E.push('Erreur de syntaxe JavaScript : ' + sx);
+  } else if (nom === 'App.html') {
+    const v = versionFichier_(nom, s), fin = (s.match(/FIN DE App\.html — version ([0-9][\w.-]*)/) || [])[1];
+    if (!/<script[\s>]/i.test(s)) E.push('Balise <script> absente.');
+    if (!v) E.push('VERSION_APP absente.');
+    if (!fin) E.push('Ligne de fin « FIN DE App.html » absente : copie incomplète.'); else if (v && fin !== v) E.push('Ligne de fin (version ' + fin + ') différente de VERSION_APP (' + v + ').');
+    const js = (s.match(/<script>([\s\S]*)<\/script>/) || [])[1];
+    if (js) { const sx = syntaxeJs_(js); if (sx) E.push('Erreur de syntaxe JavaScript : ' + sx); }
+  } else if (nom === 'Styles.html') {
+    if (!/<style[\s>]/i.test(s)) E.push('Balise <style> absente.');
+    if (!/FIN DE Styles\.html/.test(s)) A.push('Ligne de fin « FIN DE Styles.html » absente : vérifiez que la copie est complète.');
+  } else if (nom === 'Index.html') {
+    if (!/include\(\s*['"]Styles['"]\s*\)/.test(s) || !/include\(\s*['"]App['"]\s*\)/.test(s)) E.push('Index doit inclure Styles et App (include(\'Styles\'), include(\'App\')).');
+  } else if (nom === 'ConfigInitiale.html') {
+    let o = null; try { o = JSON.parse(s); } catch (e) { E.push('JSON illisible : ' + String(e.message).slice(0, 160)); }
+    if (o && (typeof o !== 'object' || Array.isArray(o))) E.push('Le contenu doit être un objet JSON.');
+    else if (o && !o.config) A.push('Aucune rubrique « config » : valeurs génériques utilisées à l\'installation.');
+    else if (o && o.config.identite && !/^[A-Za-z0-9_-]{2,12}$/.test(String(o.config.identite.code || ''))) E.push('Code de la délégation invalide dans config.identite.code (2 à 12 lettres ou chiffres, ex. DT87).');
+  } else if (nom === 'appsscript.json') {
+    let o = null; try { o = JSON.parse(s); } catch (e) { E.push('JSON illisible : ' + String(e.message).slice(0, 160)); }
+    if (o && (typeof o !== 'object' || Array.isArray(o))) E.push('Le manifeste doit être un objet JSON.');
+    else if (o) {
+      if (o.runtimeVersion && o.runtimeVersion !== 'V8') E.push('runtimeVersion doit être "V8" (le code utilise la syntaxe moderne).');
+      if (!o.runtimeVersion) A.push('runtimeVersion absent : ajoutez "runtimeVersion": "V8".');
+      if (!o.webapp) A.push('Rubrique "webapp" absente : l\'application Web devra être reconfigurée au déploiement.');
+      if (Array.isArray(o.oauthScopes) && PROJET_PORTEES.some(p => o.oauthScopes.indexOf(p) < 0)) A.push('"oauthScopes" ne contient pas ' + PROJET_PORTEES.filter(p => o.oauthScopes.indexOf(p) < 0).join(' ni ') + ' : après import, l\'export / import depuis l\'administration ne fonctionnera plus.');
+    }
+  }
+  return { erreurs: E, avertissements: A };
+}
+// Fichiers reçus → les 6 emplacements attendus (présents, manquants, doublons, ignorés) et contrôles complets
+function analyserProjet_(recus, mode, actuels) {
+  recus = (Array.isArray(recus) ? recus : []).slice(0, 40);
+  const slots = {}, ignores = [];
+  recus.forEach(f => {
+    const nomRecu = String((f && f.nom) || '').slice(0, 200), contenu = String((f && f.contenu) == null ? '' : f.contenu);
+    if (/^__MACOSX\//.test(nomRecu) || /(^|\/)\.[^/]*$/.test(nomRecu) || /\/$/.test(nomRecu)) return;   // dossiers et fichiers cachés d'une archive
+    const parNom = reconnaitreNomProjet_(nomRecu), parContenu = devinerContenuProjet_(contenu), nom = parNom || parContenu;
+    if (!nom) { ignores.push({ nom: nomRecu, raison: 'Fichier non reconnu (ni par son nom, ni par son contenu).' }); return; }
+    (slots[nom] = slots[nom] || []).push({ nom_recu: nomRecu, contenu: contenu, reconnu: parNom ? 'nom' : 'contenu' });
+  });
+  const cibles = mode && mode !== 'complet' ? [mode] : PROJET_FICHIERS.map(d => d.nom);
+  Object.keys(slots).forEach(n => { if (cibles.indexOf(n) < 0) slots[n].forEach(x => ignores.push({ nom: x.nom_recu, raison: 'Reconnu comme ' + n + ', non concerné par cet import.' })); });
+  const fichiers = cibles.map(nom => {
+    const L = slots[nom] || [], act = actuels ? actuels[nom] : undefined;
+    const o = { nom: nom, statut: L.length ? 'present' : 'manquant', erreurs: [], avertissements: [] };
+    if (L.length > 1) { o.erreurs.push('Plusieurs fichiers pour ' + nom + ' : ' + L.map(x => x.nom_recu).join(', ') + '. Gardez-en un seul.'); }
+    if (!L.length) return o;
+    const x = L[0], v = verifierFichierProjet_(nom, x.contenu);
+    Object.assign(o, { nom_recu: x.nom_recu, reconnu: x.reconnu, taille: x.contenu.length, lignes: lignesTexte_(x.contenu), version: versionFichier_(nom, x.contenu) });
+    o.erreurs = o.erreurs.concat(v.erreurs); o.avertissements = v.avertissements;
+    if (act !== undefined) { o.actuel = act === null ? null : { taille: act.length, lignes: lignesTexte_(act), version: versionFichier_(nom, act) }; o.identique = act !== null && act === x.contenu; }
+    o._contenu = x.contenu;
+    return o;
+  });
+  // Cohérence Code.gs ↔ App.html (contrôlée au démarrage de l'application) : avec les fichiers reçus, sinon ceux en place
+  const ver = n => { const f = fichiers.find(z => z.nom === n && z.statut === 'present'); return f ? f.version : actuels && actuels[n] ? versionFichier_(n, actuels[n]) : ''; };
+  const vc = ver('Code.gs'), va = ver('App.html');
+  if (vc && va && vc !== va) {
+    const msg = 'Versions différentes : Code.gs ' + vc + ' / App.html ' + va + '. L\'application signalera une mise à jour incomplète tant que les deux ne sont pas identiques.';
+    fichiers.filter(f => (f.nom === 'Code.gs' || f.nom === 'App.html') && f.statut === 'present').forEach(f => (mode === 'complet' ? f.erreurs : f.avertissements).push(msg));
+  }
+  const manquants = fichiers.filter(f => f.statut === 'manquant').map(f => f.nom);
+  const bloquant = fichiers.some(f => f.erreurs.length) || (mode === 'complet' ? manquants.length > 0 : !fichiers.length || fichiers[0].statut !== 'present');
+  return { mode: mode || 'complet', fichiers: fichiers, presents: fichiers.filter(f => f.statut === 'present').map(f => f.nom), manquants: manquants, ignores: ignores,
+    complet: !manquants.length, bloquant: bloquant, identique: fichiers.length > 0 && fichiers.every(f => f.identique === true), version_code: vc, version_app: va };
+}
+const sansContenu_ = a => Object.assign({}, a, { fichiers: a.fichiers.map(f => { const x = Object.assign({}, f); delete x._contenu; return x; }) });
+function sourcesActuelles_(files) { const A = fichiersAttendus_(files), o = {}; PROJET_FICHIERS.forEach(d => o[d.nom] = A[d.nom] ? A[d.nom].source : null); return o; }
+function zipProjet_(liste, nomZip) {
+  return Utilities.zip(liste.map(x => Utilities.newBlob('', defProjet_(x.nom) ? defProjet_(x.nom).mime : 'text/plain', x.nom).setDataFromString(x.contenu, 'UTF-8')), nomZip);
+}
+const horodatage_ = () => Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyy-MM-dd_HHmm');
+
+// ---------- API de l'administration ----------
+// État : accès à l'API, déploiement, les 6 fichiers (présents, taille, version), autres fichiers du projet
+function api_projetEtat(sid) {
+  return appel_(sid, 'admin', u => {
+    const o = { script_id: '', version_code: VERSION_CODE, api: { ok: false, message: '' }, portees: PROJET_PORTEES, portees_code: PROJET_PORTEES_CODE, fichiers: [], autres: [], deploiement: null, url: urlOfficielle_() };
+    try { o.script_id = ScriptApp.getScriptId(); } catch (e) { }
+    let C = null;
+    try { C = contenuProjet_('service'); o.api.ok = true; o.deploiement = C.deploiement; } catch (e) { o.api.message = e.message || String(e); }
+    let E = null; if (C) { try { E = contenuProjet_('editeur'); } catch (e) { } }
+    const A = C ? fichiersAttendus_(C.files) : {}, AE = E ? sourcesActuelles_(E.files) : null;
+    o.fichiers = PROJET_FICHIERS.map(d => {
+      const f = A[d.nom], s = f ? f.source : C ? null : lectureHtmlService_(d);
+      return { nom: d.nom, present: s !== null && s !== undefined, lecture: f ? 'api' : s != null ? 'html' : '', taille: s != null ? s.length : 0, lignes: s != null ? lignesTexte_(s) : 0,
+        version: s != null ? versionFichier_(d.nom, s) : '', nom_projet: f ? f.name : '', modifie_editeur: !!(AE && s != null && AE[d.nom] !== null && AE[d.nom] !== s) };
+    });
+    if (C) { const pris = PROJET_FICHIERS.map(d => A[d.nom]).filter(Boolean); o.autres = C.files.filter(f => pris.indexOf(f) < 0).map(f => f.name + ({ SERVER_JS: '.gs', HTML: '.html', JSON: '.json' }[f.type] || '')); }
+    return o;
+  });
+}
+// Un fichier, tel quel (nom et extension d'origine) ; cible : 'service' (version en service, par défaut) ou 'editeur'
+function api_projetExporter(sid, nom, cible) {
+  return appel_(sid, 'admin', u => {
+    const d = defProjet_(String(nom || '')); if (!d) throw Oups_('Fichier inconnu.');
+    let s = null, lecture = 'api', C = null;
+    try { C = contenuProjet_(cible); const f = fichiersAttendus_(C.files)[d.nom]; s = f ? f.source : null; if (s === null) throw Oups_(d.nom + ' est absent du projet Apps Script.'); }
+    catch (e) {
+      if (e && e.utilisateur && C) throw e;
+      s = lectureHtmlService_(d); lecture = 'html';
+      if (s === null) throw Oups_('Impossible de lire ' + d.nom + ' : ' + (e.message || e));
+    }
+    journalSecu_(u.email, 'projet_export', d.nom + ' · ' + s.length + ' caractères' + (lecture === 'html' ? ' (HtmlService)' : C && C.version ? ' (version ' + C.version + ')' : ''));
+    return { nom: d.nom, mime: d.mime, contenu: s, taille: s.length, lignes: lignesTexte_(s), version: versionFichier_(d.nom, s), lecture: lecture, version_deploiement: C ? C.version : null };
+  });
+}
+// Les 6 fichiers dans une archive .zip (refusé s'il en manque un : jamais d'export partiel présenté comme complet)
+function api_projetExporterTout(sid, cible) {
+  return appel_(sid, 'admin', u => {
+    const C = contenuProjet_(cible), A = fichiersAttendus_(C.files);
+    const manquants = PROJET_FICHIERS.filter(d => !A[d.nom]).map(d => d.nom);
+    if (manquants.length) throw Oups_('Export impossible : fichier(s) absent(s) du projet Apps Script : ' + manquants.join(', ') + '.');
+    const liste = PROJET_FICHIERS.map(d => ({ nom: d.nom, contenu: A[d.nom].source }));
+    const nomZip = 'Projet_' + config_().identite.code + '_v' + VERSION_CODE + '_' + horodatage_() + '.zip', z = zipProjet_(liste, nomZip);
+    journalSecu_(u.email, 'projet_export', 'projet complet · ' + nomZip);
+    return { nom: nomZip, data: Utilities.base64Encode(z.getBytes()), fichiers: liste.map(x => ({ nom: x.nom, taille: x.contenu.length, lignes: lignesTexte_(x.contenu) })), version_deploiement: C.version };
+  });
+}
+// Archive .zip reçue → fichiers texte (UTF-8), pour l'analyse
+function api_projetLireZip(sid, b64) {
+  return appel_(sid, 'admin', u => {
+    let L;
+    try { L = Utilities.unzip(Utilities.newBlob(Utilities.base64Decode(String(b64 || '')), 'application/zip', 'projet.zip')); }
+    catch (e) { throw Oups_('Archive .zip illisible.'); }
+    return L.filter(b => !/\/$/.test(b.getName())).slice(0, 40).map(b => ({ nom: b.getName(), contenu: b.getDataAsString('UTF-8') }));
+  });
+}
+// Analyse sans rien modifier : présents, manquants, ignorés, contrôles, comparaison avec le projet actuel
+function api_projetAnalyser(sid, recus, mode) {
+  return appel_(sid, 'admin', u => {
+    if (mode && mode !== 'complet' && !defProjet_(mode)) throw Oups_('Fichier inconnu.');
+    let actuels = null, acces = '';
+    try { actuels = sourcesActuelles_(contenuProjet_('editeur').files); } catch (e) { acces = e.message || String(e); }
+    const a = sansContenu_(analyserProjet_(recus, mode, actuels));
+    a.api = { ok: !acces, message: acces };
+    return a;
+  });
+}
+// Remplacement, après confirmation : analyse refaite ici, sauvegarde du projet actuel, écriture, relecture et comparaison
+function api_projetAppliquer(sid, recus, mode, options) {
+  return appel_(sid, 'admin', u => {
+    options = options || {};
+    if (options.confirmation !== 'REMPLACER') throw Oups_('Confirmation manquante.');
+    if (mode && mode !== 'complet' && !defProjet_(mode)) throw Oups_('Fichier inconnu.');
+    const lock = LockService.getScriptLock(); if (!lock.tryLock(20000)) throw Oups_('Un autre import est en cours. Réessayez dans un instant.');
+    try {
+      const C = contenuProjet_('editeur'), actuels = sourcesActuelles_(C.files);
+      const a = analyserProjet_(recus, mode, actuels);
+      if (a.bloquant) throw Oups_('Import refusé : ' + (a.manquants.length && mode === 'complet' ? 'fichier(s) manquant(s) : ' + a.manquants.join(', ') + '. ' : '') + a.fichiers.filter(f => f.erreurs.length).map(f => f.nom + ' — ' + f.erreurs.join(' ')).join(' | '));
+      const avert = a.fichiers.filter(f => f.avertissements.length);
+      if (avert.length && options.avertissements_acceptes !== true) throw Oups_('Des avertissements doivent être acceptés avant le remplacement.');
+      const aEcrire = a.fichiers.filter(f => f.statut === 'present' && !f.identique);
+      const rapport = { importes: [], inchanges: a.fichiers.filter(f => f.identique).map(f => f.nom), erreurs: [], sauvegarde: null, publication: null, autres_conserves: [] };
+      if (!aEcrire.length) return rapport;
+      // 1. Sauvegarde du projet actuel (tous ses fichiers) AVANT toute écriture
+      const tout = C.files.map(f => ({ nom: f.name + ({ SERVER_JS: '.gs', HTML: '.html', JSON: '.json' }[f.type] || '.txt'), contenu: f.source }));
+      const nomSv = 'Projet_avant-import_' + config_().identite.code + '_v' + VERSION_CODE + '_' + horodatage_() + '.zip';
+      try { const fz = ecritureDrive_('sauvegardes', () => dossier_('sauvegardes').createFile(zipProjet_(tout, nomSv))); rapport.sauvegarde = { nom: nomSv, url: fz.getUrl() }; }
+      catch (e) { if (options.sauvegarde_locale !== true) throw Oups_('Sauvegarde du projet actuel impossible dans le Drive (' + (e.message || e) + '). Téléchargez d\'abord le projet complet, puis confirmez l\'import avec « sauvegarde téléchargée ».'); rapport.sauvegarde = { nom: '', url: '', locale: true }; }
+      // 2. Nouvelle liste : fichiers remplacés à leur place (même nom dans le projet), tous les autres fichiers conservés
+      const A = fichiersAttendus_(C.files), files = C.files.map(f => ({ name: f.name, type: f.type, source: f.source }));
+      aEcrire.forEach(f => {
+        const d = defProjet_(f.nom), ex = A[f.nom], i = ex ? C.files.indexOf(ex) : -1;
+        if (i > -1) files[i].source = f._contenu; else files.push({ name: d.api, type: d.type, source: f._contenu });
+      });
+      rapport.autres_conserves = C.files.filter(f => PROJET_FICHIERS.every(d => A[d.nom] !== f)).map(f => f.name);
+      projetApi_('put', 'projects/' + ScriptApp.getScriptId() + '/content', { files: files });
+      // 3. Relecture : chaque fichier écrit est comparé au fichier reçu
+      const relu = sourcesActuelles_(contenuProjet_('editeur').files);
+      aEcrire.forEach(f => { if (relu[f.nom] === f._contenu) rapport.importes.push({ nom: f.nom, taille: f.taille, lignes: f.lignes, version: f.version }); else rapport.erreurs.push(f.nom + ' : le contenu relu diffère du fichier importé.'); });
+      journalSecu_(u.email, 'projet_import', rapport.importes.map(f => f.nom).join(', ') + (rapport.erreurs.length ? ' · ERREURS : ' + rapport.erreurs.join(' ; ') : '') + (rapport.sauvegarde && rapport.sauvegarde.nom ? ' · sauvegarde ' + rapport.sauvegarde.nom : ''));
+      // 4. Publication facultative sur l'adresse de l'application (nouvelle version du déploiement)
+      if (options.publier && !rapport.erreurs.length) {
+        try { rapport.publication = publierProjet_('Import ' + rapport.importes.map(f => f.nom).join(', ') + ' par ' + u.email); }
+        catch (e) { rapport.publication = { ok: false, message: e.message || String(e) }; }
+        journalSecu_(u.email, 'projet_publication', rapport.publication.ok ? 'version ' + (rapport.publication.version || 'HEAD') : 'échec : ' + rapport.publication.message);
+      }
+      return rapport;
+    } finally { try { lock.releaseLock(); } catch (e) { } }
+  });
+}
+function publierProjet_(description) {
+  const id = ScriptApp.getScriptId(), dep = deploiementActuel_();
+  if (!dep.id) return { ok: false, message: 'Adresse officielle de l\'application inconnue : publiez depuis l\'éditeur (Déployer > Gérer les déploiements > Modifier > Nouvelle version).' };
+  if (dep.head) return { ok: true, version: null, message: 'Le déploiement utilise directement le code enregistré : rien à publier.' };
+  const v = projetApi_('post', 'projects/' + id + '/versions', { description: String(description).slice(0, 900) });
+  const d = projetApi_('get', 'projects/' + id + '/deployments/' + dep.id), c = d.deploymentConfig || {};
+  projetApi_('put', 'projects/' + id + '/deployments/' + dep.id, { deploymentConfig: { scriptId: id, versionNumber: v.versionNumber, manifestFileName: c.manifestFileName || 'appsscript', description: String(description).slice(0, 900) } });
+  return { ok: true, version: v.versionNumber, message: 'Version ' + v.versionNumber + ' publiée sur l\'adresse de l\'application.' };
+}
+
+// ---------- Duplication pour une autre délégation ----------
+// ConfigInitiale de la nouvelle DT : réglages génériques conservés ; identité, Drive, adresses, liens et UL de la DT
+// d'origine jamais repris (remplacés par les valeurs saisies ou laissés vides, à compléter).
+function configInitialeNouvelleDT_(base, p, source) {
+  const ini = base && typeof base === 'object' ? base : {};
+  const cfg = JSON.parse(JSON.stringify(ini.config || {}));
+  const ancien = Object.assign({}, CONFIG_DEFAUT.identite, source || {});
+  delete cfg.meta;
+  cfg.identite = Object.assign({}, CONFIG_DEFAUT.identite, { code: p.code, nom_centre: p.nom_centre || ('Centre Com ' + p.code), territoire: p.territoire || '',
+    nom_structure: p.nom_structure || (CONFIG_DEFAUT.identite.nom_structure + (p.territoire ? ' ' + p.territoire : '')) });
+  cfg.drive = { racine: p.drive_racine || '' };
+  if (cfg.securite) cfg.securite.google_client_id = '';
+  const motsAnciens = [[ancien.nom_centre, cfg.identite.nom_centre], [ancien.nom_structure, cfg.identite.nom_structure], [ancien.territoire, p.territoire], [ancien.code, p.code]].filter(x => x[0] && x[1] && String(x[0]).length > 2 && x[0] !== 'Centre Com');
+  const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, LIEN_DRIVE = /https?:\/\/(drive|docs)\.google\.com\/\S*/g;
+  const nettoyer = (v, cle) => {
+    if (Array.isArray(v)) return v.map(x => nettoyer(x, cle));
+    if (v && typeof v === 'object') { const o = {}; Object.keys(v).forEach(k => o[k] = nettoyer(v[k], k)); return o; }
+    if (typeof v !== 'string') return v;
+    if (/e-?mail|destinataire|repondre/i.test(cle || '') && EMAIL.test(v)) { EMAIL.lastIndex = 0; return ''; }
+    EMAIL.lastIndex = 0;
+    let s = v.replace(EMAIL, '[adresse à compléter]').replace(LIEN_DRIVE, '');
+    motsAnciens.forEach(x => { s = s.split(x[0]).join(x[1]); });
+    return s;
+  };
+  const propre = nettoyer(Object.assign({}, cfg, { identite: undefined, drive: undefined }));
+  propre.identite = cfg.identite; propre.drive = cfg.drive;
+  const t = ini.tables || {}, ul = (Array.isArray(p.ul) ? p.ul : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 200);
+  const tables = { ul: ul.length ? ul.map(n => ({ nom: n.slice(0, 120), actif: 'OUI' })) : [{ nom: 'Délégation territoriale', actif: 'OUI' }] };
+  if (Array.isArray(t.types) && t.types.length) tables.types = nettoyer(t.types);   // types de demande : génériques (délais, champs)
+  return {
+    _lisez_moi: ['Configuration de départ de la délégation ' + p.code + ' (préparée le ' + dateFr_(aujourdhui_()) + ').',
+      'Aucune donnée de la délégation d\'origine : identité, adresses e-mail, liens Drive, unités locales et utilisateurs sont à régler pour ' + p.code + '.',
+      'À vérifier ici avant installer() : config.identite (nom, code, territoire), config.drive.racine (lien du dossier du Drive partagé), tables.ul (unités locales).',
+      'Les autres réglages se font ensuite dans Administration (identité, logos, notifications, utilisateurs…).'],
+    config: propre, tables: tables,
+  };
+}
+function api_projetNouvelleDT(sid, p) {
+  return appel_(sid, 'admin', u => {
+    p = p || {};
+    const q = { code: String(p.code || '').trim(), nom_centre: txtM_(p.nom_centre, 120), territoire: txtM_(p.territoire, 120), nom_structure: txtM_(p.nom_structure, 160), drive_racine: txtM_(p.drive_racine, 300),
+      ul: String(p.ul || '').split('\n'), reglages_actuels: p.reglages_actuels === true };
+    if (!/^[A-Za-z0-9_-]{2,12}$/.test(q.code)) throw Oups_('Code de la nouvelle délégation invalide : 2 à 12 lettres ou chiffres (ex. DT09).');
+    const actuel = config_();
+    if (q.code.toLowerCase() === String(actuel.identite.code).toLowerCase()) throw Oups_('Le code doit être celui de la NOUVELLE délégation (différent de ' + actuel.identite.code + ').');
+    if (q.drive_racine && !/^https:\/\/drive\.google\.com\//.test(q.drive_racine) && !/^[A-Za-z0-9_-]{15,}$/.test(q.drive_racine)) throw Oups_('Dossier Drive : collez le lien du dossier (https://drive.google.com/…) ou laissez vide.');
+    const C = contenuProjet_('service'), A = fichiersAttendus_(C.files);
+    const manquants = PROJET_FICHIERS.filter(d => !A[d.nom] && d.nom !== 'ConfigInitiale.html').map(d => d.nom);
+    if (manquants.length) throw Oups_('Préparation impossible : fichier(s) absent(s) du projet : ' + manquants.join(', ') + '.');
+    let base = {};
+    if (q.reglages_actuels) base = { config: JSON.parse(JSON.stringify(actuel)), tables: { types: DB.tout('types').map(x => { const o = Object.assign({}, x); delete o._ligne; return o; }) } };
+    else if (A['ConfigInitiale.html']) { try { base = JSON.parse(A['ConfigInitiale.html'].source); } catch (e) { base = {}; } }
+    const ci = JSON.stringify(configInitialeNouvelleDT_(base, q, actuel.identite), null, 2);
+    const liste = PROJET_FICHIERS.map(d => ({ nom: d.nom, contenu: d.nom === 'ConfigInitiale.html' ? ci : A[d.nom].source }));
+    // Mentions restantes de la DT d'origine dans les fichiers de code (signalées, jamais modifiées automatiquement)
+    const mentions = [];
+    ['Index.html', 'Styles.html', 'App.html', 'ConfigInitiale.html'].forEach(n => { const s = liste.find(x => x.nom === n).contenu, k = actuel.identite.code; const nb = k ? s.split(k).length - 1 : 0; if (nb) mentions.push({ nom: n, nb: nb }); });
+    const nomZip = 'Projet_' + q.code + '_depuis_' + actuel.identite.code + '_v' + VERSION_CODE + '_' + horodatage_() + '.zip';
+    journalSecu_(u.email, 'projet_export', 'nouvelle délégation ' + q.code + ' · ' + nomZip);
+    return { nom: nomZip, data: Utilities.base64Encode(zipProjet_(liste, nomZip).getBytes()), config_initiale: ci, mentions: mentions, code_source: actuel.identite.code };
+  });
+}
+
+// ===== FIN DE Code.gs — version 3.30.0 — si cette ligne n'apparaît pas tout en bas après collage, la copie est incomplète =====
